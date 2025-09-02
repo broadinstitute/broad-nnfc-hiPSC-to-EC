@@ -205,3 +205,27 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+.Rproj.user
+
+# --- renv (R dependency manager) ---
+renv/library/
+renv/staging/
+# if you use renv profiles, ignore their libs too
+renv/profiles/*/library/
+# optional: if you let renv/reticulate create local Python envs
+renv/python/
+
+# --- R session cruft ---
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.Rapp.history
+.Rprofile
+.Renviron
+
+bak/
+annotations/
+metadata/
+results/
+
