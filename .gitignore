@@ -226,6 +226,9 @@ renv/python/
 
 bak/
 annotations/
-metadata/
+data/
 results/
 
+.DS_Store
+
+__marimo__/
