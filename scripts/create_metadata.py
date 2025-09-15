@@ -70,11 +70,12 @@ def _(pd):
         'rep' + metadata_df['replicate'].astype(str).str.zfill(2) + '_' +
         'day'   + metadata_df['day'].astype(str).str.zfill(2) + '_' +
         'chip_' + metadata_df['chip'].str.lower() + '_' +
-        'batch' + metadata_df['batch'].astype(str).str.zfill(2)
+        'batch' + metadata_df['batch'].astype(str).str.zfill(2) + '_' +
+        'channel' + metadata_df['channel'].astype(str).str.zfill(2)
     )
 
     # save metadata
-    metadata_df.to_csv('metadata/hiPSC-EC/metadata.csv', index=False)
+    metadata_df.to_csv('metadata/hiPSC-EC/metadata_sample.csv', index=False)
     metadata_df
     return
 

@@ -1,0 +1,17 @@
+sample,replicate,day,chip,batch,channel,viral_volume,sample_label_short,sample_label_long,sample_id
+100-D0-r2-A1,1,0,A,1,1,100,Vol_100_Day_0,Replicate 1 Volume 100 Day 0 Chip A Batch 1 Channel 1,rep01_vol100_day00_chip_a_batch01_channel01
+100-D0-r2-A2,1,0,A,1,2,100,Vol_100_Day_0,Replicate 1 Volume 100 Day 0 Chip A Batch 1 Channel 2,rep01_vol100_day00_chip_a_batch01_channel02
+100-D0-r2-A3,1,0,A,1,3,100,Vol_100_Day_0,Replicate 1 Volume 100 Day 0 Chip A Batch 1 Channel 3,rep01_vol100_day00_chip_a_batch01_channel03
+100-D0-r2-A4,1,0,A,1,4,100,Vol_100_Day_0,Replicate 1 Volume 100 Day 0 Chip A Batch 1 Channel 4,rep01_vol100_day00_chip_a_batch01_channel04
+150-D0-r2-A5,1,0,A,1,5,150,Vol_150_Day_0,Replicate 1 Volume 150 Day 0 Chip A Batch 1 Channel 5,rep01_vol150_day00_chip_a_batch01_channel05
+150-D0-r2-A6,1,0,A,1,6,150,Vol_150_Day_0,Replicate 1 Volume 150 Day 0 Chip A Batch 1 Channel 6,rep01_vol150_day00_chip_a_batch01_channel06
+150-D0-r2-A7,1,0,A,1,7,150,Vol_150_Day_0,Replicate 1 Volume 150 Day 0 Chip A Batch 1 Channel 7,rep01_vol150_day00_chip_a_batch01_channel07
+150-D0-r2-A8,1,0,A,1,8,150,Vol_150_Day_0,Replicate 1 Volume 150 Day 0 Chip A Batch 1 Channel 8,rep01_vol150_day00_chip_a_batch01_channel08
+100-D0-r2-B1,1,0,B,2,1,100,Vol_100_Day_0,Replicate 1 Volume 100 Day 0 Chip B Batch 1 Channel 1,rep01_vol100_day00_chip_b_batch01_channel01
+100-D0-r2-B2,1,0,B,2,2,100,Vol_100_Day_0,Replicate 1 Volume 100 Day 0 Chip B Batch 1 Channel 2,rep01_vol100_day00_chip_b_batch01_channel02
+100-D0-r2-B3,1,0,B,2,3,100,Vol_100_Day_0,Replicate 1 Volume 100 Day 0 Chip B Batch 1 Channel 3,rep01_vol100_day00_chip_b_batch01_channel03
+100-D0-r2-B4,1,0,B,2,4,100,Vol_100_Day_0,Replicate 1 Volume 100 Day 0 Chip B Batch 1 Channel 4,rep01_vol100_day00_chip_b_batch01_channel04
+150-D0-r2-B5,1,0,B,2,5,150,Vol_150_Day_0,Replicate 1 Volume 150 Day 0 Chip B Batch 1 Channel 5,rep01_vol150_day00_chip_b_batch01_channel05
+150-D0-r2-B6,1,0,B,2,6,150,Vol_150_Day_0,Replicate 1 Volume 150 Day 0 Chip B Batch 1 Channel 6,rep01_vol150_day00_chip_b_batch01_channel06
+150-D0-r2-B7,1,0,B,2,7,150,Vol_150_Day_0,Replicate 1 Volume 150 Day 0 Chip B Batch 1 Channel 7,rep01_vol150_day00_chip_b_batch01_channel07
+150-D0-r2-B8,1,0,B,2,8,150,Vol_150_Day_0,Replicate 1 Volume 150 Day 0 Chip B Batch 1 Channel 8,rep01_vol150_day00_chip_b_batch01_channel08
