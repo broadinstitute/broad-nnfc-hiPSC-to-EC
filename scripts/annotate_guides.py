@@ -117,18 +117,11 @@ def annotate_guides(merged_guides: pd.DataFrame, genes: pd.DataFrame, target_win
     )
     return merged_guides
 
+
 def main() -> None:
     """
     Main entry point for guide annotation workflow.
     """
-    guides, genes = load_data()
-    merged_guides = merge_guides(guides, DIST_THRESHOLD)
-    annotated_guides = annotate_guides(merged_guides, genes, TARGET_WINDOW)
-    annotated_guides.to_csv("results/2025-09-15/annotated_guides.csv", index=False)
-    print("Annotated guides saved to results/2025-09-15/annotated_guides.csv")
-
-if __name__ == "__main__":
-    main()
     guides, genes = load_data()
     merged_guides = merge_guides(guides, DIST_THRESHOLD)
     annotated_guides = annotate_guides(merged_guides, genes, TARGET_WINDOW)

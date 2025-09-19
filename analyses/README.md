@@ -36,6 +36,9 @@ WARNING: The metadata and scripts folder are a work in progress and may not be c
 
 - **[d0_seurat_object_filtered_norm.rds](../../results/2025-09-18/d0_seurat_object_filtered_norm.rds)**  
   RDS file containing a Seurat object with filtered and normalized data for D0 hiPSC.
+  **Layers:**
+  - `counts.<sample_name>`: Raw counts matrix (genes x cells) per sample
+  - `data.<sample_name>`: Normalized data (CPM) matrix (genes x cells) per sample
 
 - **[mean_cpm_per_gene_filtered_cells.tsv](../../results/2025-09-18/mean_cpm_per_gene_filtered_cells.tsv)**  
   TSV file with mean CPM per gene across all filtered cells (lenient filtering).  
