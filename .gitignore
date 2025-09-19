@@ -227,6 +227,7 @@ renv/python/
 bak/
 annotations/
 data/
+metadata/
 results/
 
 .DS_Store
