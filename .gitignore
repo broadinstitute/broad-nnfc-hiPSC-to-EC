@@ -233,3 +233,4 @@ results/
 .DS_Store
 
 __marimo__/
+metadata/hiPSC-HPC/metadata_genes.csv
