@@ -1,7 +1,8 @@
+WARNING: The metadata and scripts folder are a work in progress and may not be complete or fully accurate.
+
 # Index
 - [hiPSC → HPC differentiation large screen](#hipsc--hpc-differentiation-large-screen)
 - [hiPSC → EC differentiation large screen](#hipsc--ec-differentiation-large-screen)
-
 
 ## hiPSC → HPC differentiation large screen
 
@@ -57,6 +58,19 @@
   - `gene_symbol`: Gene symbol  
   - `name`: This is the full gene name
   - `summary`: Description of the function
+
+- **[keyword_category_counts.tsv](../../results/2025-09-18_gene_annotations/keyword_category_counts.tsv)**
+  TSV file with counts of keywords in gene annotations.  
+  **Columns:**  
+  - `category_keyword`: Keyword found in gene annotations  
+  - `n_genes`: Number of genes associated with the keyword
+
+- **[keyword_category_gene_list.tsv](../../results/2025-09-18_gene_annotations/keyword_category_gene_list.tsv)**
+  TSV file listing genes associated with each keyword category.  
+  **Columns:**  
+  - `category_keyword`: Keyword found in gene annotations  
+  - `gene_symbol`: Gene symbol associated with the keyword
+  - `annotation`: Annotation text associated with the keyword
   
 ## hiPSC → EC differentiation large screen
 

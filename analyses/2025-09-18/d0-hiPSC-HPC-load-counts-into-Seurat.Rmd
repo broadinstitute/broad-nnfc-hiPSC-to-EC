@@ -266,13 +266,14 @@ ggplot(cpm_df, aes(x = type, y = mean_cpm + 1)) +
 ```{r}
 # Number of non-readout genes with CPM >= 100 
 high_cpm_non_readout_genes <- unique(cpm_df$gene[cpm_df$type == "non-readout" & cpm_df$mean_cpm >= 100])
-# Save the list
+# Add the ENSEMBL id for the genes and save
+cpm_df$ensembl_id <- gene_map$ensembl[match(cpm_df$gene, gene_map$symbol)]
 write.table(
-  cpm_df[high_cpm_non_readout_genes,c("gene", "mean_cpm")],
+  cpm_df[high_cpm_non_readout_genes,c("gene", "ensembl_id", "mean_cpm")],
   file = paste0(output_folder,"/high_cpm_non_readout_genes.tsv", sep=""),
   quote = FALSE,
   row.names = FALSE,
-  col.names = c("gene_symbol", "mean_cpm"),
+  col.names = c("gene_symbol", "ensembl_id", "mean_cpm"),
   sep = "\t"
   )
 message("Number of non-readout genes with mean CPM >= 100: ",length(high_cpm_non_readout_genes), "\n")
