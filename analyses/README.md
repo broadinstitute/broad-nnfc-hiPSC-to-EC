@@ -14,14 +14,50 @@
 - [2025-09-19](./2025-09-19/): SCEPTRE analysis for D0 hiPSC -> HPC
 
 ### Results
-- [positive_pairs_hg38_readout_genes.tsv](../../results/2025-09-15/positive_pairs_hg38_readout_genes.tsv): TSV file, first column is element name, ensembl id of the tss being targeted.
-- [discovery_pairs_no_pos_hg38_readout_genes.tsv](../../results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv): TSV file, first column is element name, ensembl id we want to test for interaction. All the elemnts overlapping a TSS have been removed from this file.
-- [grna_non_targeting_input.tsv](../../results/2025-09-15/grna_non_targeting_input.tsv): TSV file, list of non-targeting gRNAs used in the experiment.
-- [d0_seurat_object_filtered_norm.rds](../../results/2025-09-18/d0_seurat_object_filtered_norm.rds): RDS file, Seurat object with filtered and normalized data for D0 hiPSC
-- [mean_cpm_per_gene_filtered_cells.tsv](../../results/2025-09-18/mean_cpm_per_gene_filtered_cells.tsv): TSV file, mean CPM per gene across all filtered cells. Columns are gene_symbol, ensembl_id, mean_cpm, is_readout_gene. This is a targeted transcriptome experiment, the last column indicates if the gene is one of the readout genes.
-- [high_cpm_non_readout_genes.tsv](../../results/2025-09-18/high_cpm_non_readout_genes.tsv): TSV file, genes that are not readout genes but have high expression (mean CPM > 100) in the filtered cells. Columns are gene_symbol, ensembl_id, mean_cpm.
-- [gene_annotations.csv](../../results/2025-09-18_gene_annotations/gene_annotations.csv): CSV file, annotations for all the genes in the dataset (readout and non-readout). Columns are gene_symbol, ensembl_id, entrez_id, biotype, name.
 
+- **[positive_pairs_hg38_readout_genes.tsv](../../results/2025-09-15/positive_pairs_hg38_readout_genes.tsv)**  
+  TSV file containing positive element-gene pairs.  
+  **Columns:**  
+  - `element_name`: Name of the element  
+  - `ensembl_id`: Ensembl ID of the TSS being targeted
+
+- **[discovery_pairs_no_pos_hg38_readout_genes.tsv](../../results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv)**  
+  TSV file with discovery pairs (excluding positive pairs and TSS overlaps).  
+  **Columns:**  
+  - `element_name`: Name of the element  
+  - `ensembl_id`: Ensembl ID to test for interaction
+
+- **[grna_non_targeting_input.tsv](../../results/2025-09-15/grna_non_targeting_input.tsv)**  
+  TSV file listing non-targeting gRNAs used in the experiment.  
+  **Columns:**  
+  - `grna_id`: gRNA identifier  
+  - `label`: "non-targeting" (fixed value)
+
+- **[d0_seurat_object_filtered_norm.rds](../../results/2025-09-18/d0_seurat_object_filtered_norm.rds)**  
+  RDS file containing a Seurat object with filtered and normalized data for D0 hiPSC.
+
+- **[mean_cpm_per_gene_filtered_cells.tsv](../../results/2025-09-18/mean_cpm_per_gene_filtered_cells.tsv)**  
+  TSV file with mean CPM per gene across all filtered cells (lenient filtering).  
+  **Columns:**  
+  - `gene_symbol`: Gene symbol  
+  - `ensembl_id`: Ensembl gene ID  
+  - `mean_cpm`: Mean CPM value across all filtered cells  
+  - `is_readout_gene`: Indicates if the gene is a readout gene (TRUE/FALSE)
+
+- **[high_cpm_non_readout_genes.tsv](../../results/2025-09-18/high_cpm_non_readout_genes.tsv)**  
+  TSV file listing non-readout genes with high expression (mean CPM > 100).  
+  **Columns:**  
+  - `gene_symbol`: Gene symbol  
+  - `ensembl_id`: Ensembl gene ID  
+  - `mean_cpm`: Mean CPM value
+
+- **[gene_annotations.csv](../../results/2025-09-18_gene_annotations/gene_annotations.csv)**  
+  CSV file with annotations for the high CPM non-readout genes. 
+  **Columns:**  
+  - `gene_symbol`: Gene symbol  
+  - `name`: This is the full gene name
+  - `summary`: Description of the function
+  
 ## hiPSC → EC differentiation large screen
 
 ### Code
