@@ -5,6 +5,7 @@ output: html_document
 
 ```{r}
 library(perturbplan)
+library(Seurat)
 ```
 
 ```{r}
@@ -15,12 +16,68 @@ sceptre_obj <- readRDS("../../results/2025-09-19/sceptre_object.rds")
 ```{r}
 num_total_cells <- length(sceptre_obj@cells_in_use)
 
-cells_per_grna = sceptre_obj@grna_target_data_frame
-cells_per_grna$num_cells <- sapply(sceptre_obj@grna_assignments$indiv_nt_grna_idxs, length)
+cells_per_grna <- sceptre_obj@grna_target_data_frame[,c("grna_id", "grna_target")]
+head(cells_per_grna)
+cpg <- Matrix::rowSums(sceptre_obj@grna_matrix[[1]] > 10)
+cells_per_grna$num_cells <- cpg[cells_per_grna$grna_id] 
 
+discovery_pairs <- sceptre_obj@discovery_pairs[,c("grna_target", "response_id")]
+head(discovery_pairs)
+
+
+control_group <- "complement"
+side <- "both"
+n_nonzero_trt_thresh <- 7
+n_nonzero_cntrl_thresh <- 7
 ```
 
 ```{r}
-a=sapply(sceptre_obj@grna_assignments$indiv_nt_grna_idxs, length)
+seurat_object <- CreateSeuratObject(counts = sceptre_obj@response_matrix)
+seurat_object <- FindVariableFeatures(
+  object = seurat_object,
+  selection.method = "vst",
+  nfeatures = 50
+)
+
+gene_metrics <- seurat_object[["RNA"]]@meta.data
+# You can now access the columns directly
+mean_values <- gene_metrics$vst.mean
+variance_values <- gene_metrics$vst.variance
+
+# For a data frame with all the metrics
+baseline_expression_stats <- gene_metrics[, c("vf_vst_counts_mean", "vf_vst_counts_variance")]
+colnames(baseline_expression_stats) <- c("expression_mean", "expression_size")
+baseline_expression_stats$response_id <- rownames(sceptre_obj@response_matrix[[1]])
+baseline_expression_stats = baseline_expression_stats[,c(3,1,2)]
+head(baseline_expression_stats)
+```
+
+
+```{r}
+fold_change_mean <- 0.85
+fold_change_sd <- 0.13
+
+cutoff <- 0.005
+```
+
+```{r}
+power_results <- perturbplan::compute_power_posthoc(
+  num_total_cells = num_total_cells,
+  cells_per_grna = cells_per_grna,
+  baseline_expression_stats = baseline_expression_stats,
+  discovery_pairs = discovery_pairs,
+  control_group = control_group,
+  side = side,
+  n_nonzero_trt_thresh = n_nonzero_trt_thresh,
+  n_nonzero_cntrl_thresh = n_nonzero_cntrl_thresh,
+  fold_change_mean = fold_change_mean,
+  fold_change_sd = fold_change_sd,
+  cutoff = cutoff
+)
+```
+
+```{r}
+power_results$expected_num_discoveries
+table(power_results$individual_power$power<=0.005)
 ```
 
