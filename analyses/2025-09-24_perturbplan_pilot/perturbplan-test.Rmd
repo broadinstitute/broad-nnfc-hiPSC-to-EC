@@ -1,0 +1,26 @@
+---
+title: "perturbplan-test"
+output: html_document
+---
+
+```{r}
+library(perturbplan)
+```
+
+```{r}
+# Load the sceptre object
+sceptre_obj <- readRDS("../../results/2025-09-19/sceptre_object.rds")
+```
+
+```{r}
+num_total_cells <- length(sceptre_obj@cells_in_use)
+
+cells_per_grna = sceptre_obj@grna_target_data_frame
+cells_per_grna$num_cells <- sapply(sceptre_obj@grna_assignments$indiv_nt_grna_idxs, length)
+
+```
+
+```{r}
+a=sapply(sceptre_obj@grna_assignments$indiv_nt_grna_idxs, length)
+```
+
