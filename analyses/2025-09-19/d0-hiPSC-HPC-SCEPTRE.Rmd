@@ -1,0 +1,206 @@
+---
+title: "d0-hiPSC-HPC-Seurat"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Day 0 of hiPSC-HPC differentiation, analyzed with SCEPTRE
+
+```{r}
+library(Seurat)
+library(sceptre)
+source("../../scripts/R/utils.R")
+```
+
+
+## Inputs and outputs for the analysis
+
+SCEPTRE required as inputs:
+ - count files: Seurat RDS object generated during this `../2025-09-18/d0-hiPSC-HPC-load-counts-into-Seurat.Rmd` analysis.
+ - gRNA to element map: `results/2025-09-15/grna_to_element_mapping_hg38.tsv`
+ - positive control pairs: `results/2025-09-15/positive_pairs_hg38_readout_genes.tsv`
+ - discovery pairs: `results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv`
+ - negative control gRNAs: `results/2025-09-15/grna_non_targeting_input.tsv`
+```{r}
+output_folder <- "results/2025-09-19/"
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+
+grna_to_element_map_fnp <- "results/2025-09-15/grna_to_element_mapping_hg38.tsv"
+seurat_rds_fnp <- "results/2025-09-18/d0_seurat_object_filtered_norm.rds"
+positive_control_pairs_fnp <- "results/2025-09-15/positive_pairs_hg38_readout_genes.tsv"
+discovery_pairs_fnp <- "results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv"
+non_targeting_fnp <- "results/2025-09-15/grna_non_targeting_input.tsv"
+gene_id_mappings <- "results/2025-09-15/intermediates/gencode_tss.bed"
+```
+
+Load all the data
+```{r}
+# Load data
+d0_seurat_object <- readRDS(seurat_rds_fnp)
+d0_seurat_object
+```
+
+```{r}
+grna_to_element_map <- read.delim(grna_to_element_map_fnp, header = TRUE, stringsAsFactors = FALSE)
+message("Number of gRNA to element mappings: ", nrow(grna_to_element_map))
+positive_control_pairs <- read.delim(positive_control_pairs_fnp, stringsAsFactors = FALSE)
+message("Number of positive control pairs: ", nrow(positive_control_pairs))
+discovery_pairs <- read.delim(discovery_pairs_fnp, stringsAsFactors = FALSE)
+message("Number of discovery pairs: ", nrow(discovery_pairs))
+non_targeting <- read.delim(non_targeting_fnp, stringsAsFactors = FALSE)
+message("Number of non-targeting gRNAs: ", nrow(non_targeting))
+
+message("Number of elements: ", length(unique(grna_to_element_map$grna_target)))
+gene_map <- read.delim(gene_id_mappings, header = FALSE, stringsAsFactors = FALSE)
+colnames(gene_map) <- c("chrom", "tss_start", "tss_end", "transcript_id", "score", "strand", "gene_id", "gene_type", "gene_symbol")
+gene_map <- unique(gene_map[, c("gene_id", "gene_symbol")])
+head(gene_map)
+```
+
+## Prepare inputs for SCEPTRE 
+
+```{r}
+# Append the non-targeting gRNAs to the gRNA to element map
+colnames(non_targeting) <- colnames(grna_to_element_map)
+rbind(
+  grna_to_element_map,
+  non_targeting
+) -> grna_to_element_with_non_targeting_map
+
+# Change the '_' to '-' in the gRNA IDs to match the gRNA count matrix
+grna_to_element_with_non_targeting_map$grna_id <- gsub("_", "-", grna_to_element_with_non_targeting_map$grna_id)
+
+message("Number of gRNA to element mappings (including non-targeting): ", nrow(grna_to_element_with_non_targeting_map))
+
+# Assign the column names that SCEPTRE expects
+colnames(positive_control_pairs) <- c("grna_target", "response_id")
+colnames(discovery_pairs) <- c("grna_target", "response_id")
+
+# Check that all gRNAs in the pairs are in the gRNA to element map
+all(positive_control_pairs$grna_target %in% grna_to_element_with_non_targeting_map$grna_target)
+all(discovery_pairs$grna_target %in% grna_to_element_with_non_targeting_map$grna_target)
+
+# Change the discovery pairs response_id column to gene_symbols
+discovery_pairs$response_id <- gene_map$gene_symbol[match(discovery_pairs$response_id, gene_map$gene_id)]
+# Change the positive control pairs response_id column to gene_symbols
+positive_control_pairs$response_id <- gene_map$gene_symbol[match(positive_control_pairs$response_id, gene_map$gene_id)]
+
+d0_merged_layer <- JoinLayers(d0_seurat_object[["RNA"]], new.layer.name = "counts", layers = "counts")
+rna_counts <- GetAssayData(d0_merged_layer, assay = "RNA", layer = "counts")
+grna_counts <- GetAssayData(d0_seurat_object, assay = "gRNA", layer = "counts")
+message("Dimensions of RNA count matrix: ", paste(dim(rna_counts), collapse = " x "))
+message("Dimensions of gRNA count matrix: ", paste(dim(grna_counts), collapse = " x "))
+
+# Check that the cell barcodes match between the RNA and gRNA count matrices
+all(colnames(rna_counts) == colnames(grna_counts))
+# Check that the gRNAs in the gRNA count matrix are in the gRNA to element map
+all(rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id)
+table(rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id)
+
+
+# Subset the RNA count matrix to only the readout genes
+present <- unique(c(positive_control_pairs$response_id, discovery_pairs$response_id))
+present <- present[present %in% gene_map$gene_id]
+length(present)
+
+rna_counts_readout_only <- rna_counts[gene_map$gene_symbol[match(present, gene_map$gene_id)], , drop = FALSE]
+message("Dimensions of RNA count matrix (subset to readout genes): ", paste(dim(rna_counts_readout_only), collapse = " x "))
+
+grna_counts <- grna_counts[grna_to_element_with_non_targeting_map$grna_id, , drop = FALSE]
+message("Dimensions of gRNA count matrix (subset to gRNAs in map): ", paste(dim(grna_counts), collapse = " x "))
+```
+
+## Create the SCEPTRE object
+
+```{r}
+# Create the initial SCEPTRE object
+sceptre_object = sceptre::import_data(
+  response_matrix = rna_counts_readout_only,
+  grna_matrix = grna_counts,
+  grna_target_data_frame = grna_to_element_with_non_targeting_map,
+  moi = "high",
+)
+sceptre_object
+
+# Set the analysis parameters
+sceptre_object <- set_analysis_parameters(
+  sceptre_object = sceptre_object,
+  discovery_pairs = discovery_pairs,
+  positive_control_pairs = positive_control_pairs,
+  side = "both"
+)
+sceptre_object
+```
+
+
+```{r}
+plot_grna_count_distributions(sceptre_object)
+# Assign gRNAs to cells using `thresholding` method and 10 UMIs threshold
+sceptre_object <- assign_grnas(
+  sceptre_object = sceptre_object,
+  parallel = TRUE,
+  method = "thresholding",
+  threshold = 10,
+  n_processors = 2
+)
+
+plot(sceptre_object)
+```
+
+## Quality control
+
+```{r}
+sceptre_object <- run_qc(sceptre_object, p_mito_threshold = 1)
+print(sceptre_object)
+```
+
+
+```{r}
+# Iterate through sceptre_object@grna_assignments$grna_group_idxs and get the number of cells assigned to each element
+median_cells_per_element <- median(sapply(sceptre_object@grna_assignments$grna_group_idxs, length))
+# Plot the distribution of number of cells assigned to each element
+hist(sapply(sceptre_object@grna_assignments$grna_group_idxs, length), breaks = 50, main = "Distribution of number of cells assigned to each element", xlab = "Number of cells assigned to element")
+abline(v = median_cells_per_element, col = "red", lwd = 2, lty = 3)
+legend_text <- paste0("Median: ", round(median_cells_per_element, 2))
+legend("topright", legend = legend_text, col = "red", lwd = 2, lty = 3, bty = "n")
+```
+
+## Calibration check
+
+```{r}
+sceptre_object <- run_calibration_check(sceptre_object, parallel = TRUE, n_processors = 2)
+plot(sceptre_object) # output suppressed for brevity
+```
+
+## Power Check
+```{r}
+sceptre_object <- run_power_check(sceptre_object, parallel = TRUE, n_processors = 2)
+plot(sceptre_object) # output suppressed for brevity
+```
+
+## Run the discovery analysis
+```{r}
+sceptre_object <- run_discovery_analysis(sceptre_object, parallel = TRUE, n_processors = 2)
+print(sceptre_object) # output suppressed for brevity
+```
+
+## Write outputs
+```{r}
+write_outputs_to_directory(
+  sceptre_object = sceptre_object,
+  directory = paste0(output_folder,"sceptre_outputs")
+)
+```
+
+```{r}
+result <- get_result(
+  sceptre_object = scqeptre_object,
+  analysis = "run_discovery_analysis"
+)
+```
+
+```{r}
+saveRDS(sceptre_object, file = paste0(output_folder,"sceptre_object.rds"))
+```
+

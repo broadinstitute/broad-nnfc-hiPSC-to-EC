@@ -78,6 +78,5 @@ power_results <- perturbplan::compute_power_posthoc(
 
 ```{r}
 power_results$expected_num_discoveries
-table(power_results$individual_power$power<=0.005)
+hist(power_results$individual_power$power)
 ```
-

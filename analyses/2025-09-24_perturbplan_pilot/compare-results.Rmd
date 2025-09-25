@@ -1,0 +1,187 @@
+---
+title: "compare-results"
+output:
+  pdf_document: default
+  html_document: default
+  output_dit: "../../results/2025-09-24_power_analysis"
+---
+
+# Compare perturbplan power analysis with simulation based power analysis
+
+The data used for this comparison is the recente hiPSC -> HPC Day 0 dataset.
+Count matrices were produced using cellranger v9.0.1 and gencode gtf v44.
+
+The final SCEPTRE object was converted to  MuData format using the script `create-mudata-from-sceptre.Rmd`.
+
+The simulation power analysis was run using `https://github.com/EngreitzLab/element-gene-power-analysis/tree/main`.
+
+The perturbplan power analysis was run using the script `run_power_analysis.Rmd`.
+```
+Rscript run_power_analysis.R \
+  -i ../../results/2025-09-24_power_analysis/mudata.h5mu \
+  -o ../../results/2025-09-24_power_analysis/mudata_perturbplan.h5mu \
+  --effect_size 0.85 \
+  --effect_size_sd 0.13 \
+  -t 8
+```
+
+
+```{r,echo=FALSE, show=FALSE}
+suppressPackageStartupMessages({
+  library(data.table)
+  library(dplyr)
+  library(ggplot2)
+  library(gridExtra)
+  library(MuData)
+  library(reshape2)
+})
+
+# Plot barplot function
+plot_barplot_metrics <- function(summary_results, metric_prefix) {
+  labels_df <- data.frame(
+    metric = c("n_pairs", "n_power_ge80", "frac_power_ge80", "expected_disc"),
+    label  = c("Number of E-G pairs", "Number of pairs with power >= 0.80", 
+               "Fraction of pairs with power >= 0.80", "Expected number of discoveries")
+  )
+  
+  metrics_to_plot <- names(summary_results)[grepl(metric_prefix, names(summary_results))]
+  
+  # Melt the summary results for ggplot
+  summary_melted <- melt(summary_results, id.vars = NULL, measure.vars = metrics_to_plot)
+  
+  # For the labels remove the prefix 
+  summary_melted$variable <- gsub(paste0("^", metric_prefix,"_"), "", summary_melted$variable)
+  
+  metric_long_label = labels_df$label[match(metric_prefix, labels_df$metric)]
+  
+  # Create the barplot and add values on top of bars
+  ggplot(summary_melted, aes(x = variable, y = value)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    geom_text(aes(label = round(value, 2)), vjust = -0.5, position = position_dodge(width = 0.9)) +
+    labs(
+      title = metric_long_label,
+      x = "Power computation method",
+      y = "Value"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+}
+```
+
+
+```{r warning=FALSE}
+# Results from perturbplan
+perturbplan_mudata = MuData::readH5MU("../../results/2025-09-24_power_analysis/mudata_perturbplan.h5mu")
+
+# Results from simulation
+simulation_df = read.table("../../results/2025-09-24_power_analysis/power_analysis_results_es_0.15.tsv", header=TRUE)
+
+# E-G scores from SCEPTRE
+sceptre_df = readRDS("../..//results/2025-09-19/sceptre_outputs/results_run_discovery_analysis.rds")
+
+# Convert to data.table. Not really necessary but easier to work with.
+perturb_dt <- as.data.table(perturbplan_mudata@metadata$power_results$individual_power)
+simulation_dt <- as.data.table(simulation_df)
+sceptre_dt = as.data.table(sceptre_df)
+
+# Clean up
+rm(
+  perturbplan_mudata,
+  simulation_df,
+  sceptre_df
+)
+```
+
+```{r warning=FALSE}
+# Merge all the variables to plot together
+results_combined_df <- merge(
+  perturb_dt[, .(grna_target, response_id, power_perturbplan = power)],
+  simulation_dt[, .(grna_target, response_id, power_simulation = power)],
+  by = c("grna_target", "response_id")
+)
+
+# Prepare SCEPTRE significance for merging
+intermediate_for_merging <- sceptre_dt[, .(grna_target, response_id, sceptre_sig = significant)]
+
+
+# Merge with t_merge
+results_combined_df <- merge(
+  results_combined_df,
+  intermediate_for_merging,
+  by = c("grna_target", "response_id")
+)
+
+head(results_combined_df)
+
+# Clean up
+rm(
+  intermediate_for_merging,
+  perturb_dt,
+  simulation_dt,
+  sceptre_dt
+)
+```
+### Number of expected discoveries
+```{r}
+summary_results <- results_combined_df %>%
+  summarise(
+    n_pairs        = n(),
+    n_power_ge80_perturbplan   = sum(power_perturbplan >= 0.80),
+    frac_power_ge80_perturbplan= mean(power_perturbplan >= 0.80),
+    expected_disc_perturbplan  = sum(power_perturbplan),
+    n_power_ge80_simulation   = sum(power_simulation >= 0.80),
+    frac_power_ge80_simulation= mean(power_simulation >= 0.80),
+    expected_disc_simulation  = sum(power_simulation)
+  )
+print(summary_results)
+```
+
+```{r, fig.width=12}
+# "n_pairs": "Total number of E-G pairs tested"
+# "n_power_ge80": "Number of pairs with power >= 0.80"
+# "frac_power_ge80":  "Fraction of pairs with power >= 0.80"
+# "expected_disc": "Expected number of discoveries"
+
+list_of_metrics = c("n_power_ge80", "frac_power_ge80", "expected_disc")
+plots = lapply(list_of_metrics, plot_barplot_metrics, summary_results = summary_results)
+do.call(grid.arrange, c(plots, ncol=3))
+```
+
+
+### Scatter plots of power results
+
+It seems that the simulation-based power analysis agrees more with the SCEPTRE significance results.
+
+There seems to be two population of pairs. One that has concordant power results between perturbplan and simulation, and another that has very low power in perturbplan but moderate to high power in simulation. 
+
+Are there specific features of these pairs that explain this difference?
+Possible explanations could be:
+ - Difference in p-value cutoffs used to compute the power in the two methods
+ - Different robustness of the methods caused by covariates (e.g. some guides have very few cells or UMI counts)
+ 
+Results not shown - Requires further investigation) 
+```{r, fig.height= 15}
+p1 <- ggplot(results_combined_df, aes(x = power_perturbplan, y = power_simulation)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Power comparison: perturbplan vs simulation",
+    subtitle = paste0("All E-G pairs. (n = ",nrow(results_combined_df),")"),
+    x = "Power (perturbplan)",
+    y = "Power (simulation)",
+    ) +
+  theme_minimal()
+
+mask_sig = results_combined_df$sceptre_sig
+p2 <- ggplot(results_combined_df[mask_sig,], aes(x = power_perturbplan, y = power_simulation)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Power comparison: perturbplan vs simulation",
+    subtitle = paste0("Only significant pairs in SCEPTRE. (n = ",nrow(results_combined_df[mask_sig,]),")"),
+    x = "Power (perturbplan)",
+    y = "Power (simulation)") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol=1)
+```
+
