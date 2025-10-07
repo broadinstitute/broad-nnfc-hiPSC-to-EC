@@ -19,7 +19,7 @@ option_list <- list(
   make_option(c("-s", "--effect_size_sd"), type = "double", default = 0.13,
               help = "Effect size standard deviation to model guide-guide variability",
               metavar = "real"),
-  make_option(c("-p", "--pvalue_cutoff"), type = "double", default = 0.001,
+  make_option(c("-p", "--pvalue_cutoff"), type = "double", default = NULL,
               help = "Nominal p-value cutoff used in power analysis", metavar = "real"),
   make_option(c("-t", "--threads"), type = "integer", default = 1, 
               help = "Number of CPU threads to use for parallelization", metavar = "integer"),
@@ -200,7 +200,7 @@ power_results <- compute_power_posthoc(
   n_nonzero_cntrl_thresh = opt$n_nonzero_cntrl_thresh,
   fold_change_mean = opt$effect_size,
   fold_change_sd = opt$effect_size_sd,
-  cutoff = opt$pvalue_cutoff
+  cutoff = NULL#opt$pvalue_cutoff
 )
 
 # add number of perturbed cells to individual power results
@@ -216,10 +216,14 @@ setnames(ind_power, "expression_size", "expression_dispersion")
 power_results$effect_size <- opt$effect_size
 
 # add results to MuData object
-message("Creating output MuData file...")
-metadata(mudata)$power_results <- power_results
-
+#message("Creating output MuData file...")
+#metadata(mudata)$power_results <- power_results
 # write MuData object including power analysis results to new MuData file
-writeH5MU(mudata, file = opt$output)
+#writeH5MU(mudata, file = opt$output)
+
+message("Saving results to file")
+write.table(power_results$individual_power,
+            file = opt$output,
+            sep = "\t", quote = FALSE, row.names = FALSE)
 
 message("All done!")
