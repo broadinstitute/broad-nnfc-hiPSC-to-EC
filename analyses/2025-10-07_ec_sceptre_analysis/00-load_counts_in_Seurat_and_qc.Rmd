@@ -1,6 +1,8 @@
 ---
 title: "00-create-sceptre-object"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 # Day 0 hiPSC -> EC
@@ -13,27 +15,27 @@ library(ggplot2)
 library(ggtext)
 
 # Custom functions
-source("scripts/R/utils.R")
+source("../../scripts/R/utils.R")
 ```
 
 ## Parameters and file paths
 ```{r}
 # INPUTS
-metadata_sample_fnp <- "metadata/hiPSC-HPC/metadata_sample.csv"
-metadata_genes_fnp <- "metadata/hiPSC-HPC/metadata_genes.csv"
-discovery_pairs_fnp <- "results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv"
-positive_pairs_fnp <- "results/2025-09-15/positive_pairs_hg38_readout_genes.tsv"
-negative_controls_fnp <- "results/2025-09-15/grna_non_targeting_input.tsv"
-metadata_primers_fnp <- "metadata/hiPSC-HPC/primer_matches_updated_names.csv"
+metadata_samples_fnp <- "../../metadata/hiPSC-EC/sample_metadata_endothelial_terra.tsv"
+metadata_genes_fnp <- "../../metadata/hiPSC-EC/metadata_genes_corrected_names.csv"
+metadata_guides_fnp <- "../../metadata/hiPSC-EC/metadata_guides_with_accession.csv"
+discovery_pairs_fnp <- "../../results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv"
+positive_pairs_fnp <- "../../results/2025-09-15/positive_pairs_hg38_readout_genes.tsv"
+negative_controls_fnp <- "../../results/2025-09-15/sceptre_non_targeting_guides_hg38.tsv"
 
 # OUTPUTS
-output_folder <- "results/2025-09-18"
+output_folder <- "results/2025-10-07_ec_sceptre_analysis"
 ```
 
 ## Load the metadata
 ```{r}
-metadata_sample_df <- read.csv(metadata_sample_fnp)
-metadata_sample_df
+metadata_samples_df <- read.csv(metadata_samples_fnp, sep = "\t")
+metadata_samples_df
 
 metadata_genes_df <- read.csv(metadata_genes_fnp)
 metadata_genes_df
@@ -41,18 +43,21 @@ metadata_genes_df
 target_genes <- metadata_genes_df$intended_target_gene_symbol
 target_genes
 
-metadata_primers_df <- read.csv(metadata_primers_fnp)
-metadata_primers_df
+h5_files_fnp <- list.files(path = "../../data/hiPSC-EC/h5", pattern = "*.h5", full.names = TRUE, recursive = TRUE)
+
+h5_sample_names <- sub(".*/(.*)_sample_filtered_feature_bc_matrix\\.h5$", "\\1", h5_files_fnp)
+
+h5_sample_names
 ```
 
 ## Create the gene symbol to ensembl ID mapping
 ```{r}
 # Load the same h5 twice, one time using gene symbols and one time using Ensembl IDs
-temp_seurat <- Read10X_h5(h5_files_fnp[1], use.names = TRUE)   # rownames = gene symbol
+temp_seurat <- Seurat::Read10X_h5(h5_files_fnp[1], use.names = TRUE)   # rownames = gene symbol
 gene_symbol_from_h5 <-  rownames(temp_seurat[[1]])
 head(gene_symbol_from_h5)
 
-temp_seurat <- Read10X_h5(h5_files_fnp[1], use.names = FALSE)  # rownames = Ensembl IDs
+temp_seurat <- Seurat::Read10X_h5(h5_files_fnp[1], use.names = FALSE)  # rownames = Ensembl IDs
 ensembl_id_from_h5 <- rownames(temp_seurat[[1]])
 head(ensembl_id_from_h5)
 
@@ -63,15 +68,15 @@ gene_map <- data.frame(
   stringsAsFactors = FALSE
 )
 head(gene_map)
-rm(c(temp_seurat, gene_symbol_from_h5, ensembl_id_from_h5))
+rm(temp_seurat, gene_symbol_from_h5, ensembl_id_from_h5)
 ```
 
 
 ## Read the count matrices in Seurat
 ```{r}
-h5_files_fnp <- list.files(path = "./data", pattern = "*.h5", full.names = TRUE, recursive = TRUE)
-
-h5_sample_names <- sub(".*/(.*)_sample_filtered_feature_bc_matrix\\.h5$", "\\1", h5_files_fnp)
+#Keeping only day 0 for speed
+h5_sample_names = metadata_samples_df$entity.endothelial_id[ metadata_samples_df$day == 0]
+h5_files_fnp = h5_files_fnp[basename(h5_files_fnp) %in% paste0(h5_sample_names,"_sample_filtered_feature_bc_matrix.h5")]
 
 seurat_objects_list <- mapply(
   read_10x_rna_grna,
@@ -82,16 +87,34 @@ seurat_objects_list <- mapply(
 
 names(seurat_objects_list) <- h5_sample_names
 
-d0_data <- SeuratObject::merge(x = seurat_objects_list[[1]], 
+d0_data <- merge(x = seurat_objects_list[[1]], 
                  y = seurat_objects_list[2:length(seurat_objects_list)],
                  merge.data = TRUE,
                  add.cell.ids = h5_sample_names)
 Assays(d0_data)
-#Remove the last character from orig.ident
-d0_data$orig.dose.chip <- gsub(".$", "", d0_data$orig.ident)
 d0_data@meta.data$all = "Combined"
-table(d0_data$orig.dose.chip)
 ```
+
+# Add metadata
+```{r}
+
+ids <- Cells(d0_data)
+sample_id <- sub("_[^_]+$", "", ids)
+
+meta <- metadata_samples_df
+meta$sample_id <- meta$entity.endothelial_id
+meta <- meta[!duplicated(meta$sample_id), , drop = FALSE]
+
+idx <- match(sample_id, meta$sample_id)
+
+meta_for_seurat <- meta[idx, , drop = FALSE]
+meta_for_seurat$sample_id <- NULL
+rownames(meta_for_seurat) <- ids
+
+
+d0_data <- AddMetaData(d0_data, metadata = meta_for_seurat)
+```
+
 
 ```{r}
 # clean up
@@ -118,7 +141,7 @@ legend_text <- paste0("Median: ", round(median(d0_data$percent.mt, na.rm = TRUE)
 legend("topright", legend = legend_text, col = "red", lwd = 2, lty = 3, bty = "n")
 ```
 
-### Compute percentage or ribosomal UMIs
+### Compute percentage of ribosomal UMIs
 ```{r}
 # Compute percentage of Ribosomal genes
 d0_data[["percent.ribo"]] <- Seurat::PercentageFeatureSet(d0_data, pattern = "^RPS|^RPL|^RRP|^MRP|^FAU", assay = "RNA")
@@ -158,7 +181,7 @@ legend("topleft", legend = legend_text, col = "red", lwd = 2, lty = 3, bty = "n"
 
 # Plot number of UMIs vs percent target UMIs
 # I want to color the on the x-axis the threshold
-x_breaks <- seq(0, 15000, by = 5000)
+x_breaks <- seq(0, 30000, by = 5000)
 x_breaks <- sort(unique(c(x_breaks, 1000)))
 x_labels <- as.character(x_breaks)
 x_labels[x_breaks == 1000] <- "<span style='color:blue'>1000</span>"
@@ -170,18 +193,20 @@ Seurat::FeatureScatter(
   feature2 = "percent_target_umis",
   group.by = "all",
 ) +
-  ggtitle("Total UMIs vs UMIs in readout genes") +
-  geom_hline(yintercept = 60, linetype = "dashed", color = "red") +
+  ggtitle("Total UMIs vs UMIs in readout genes", subtitle = paste("n = ", ncol(d0_data))) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "red") +
   geom_vline(xintercept = 1000, linetype = "dashed", color = "blue") +
   scale_x_continuous(
     breaks = x_breaks,
-    labels = x_labels
+    labels = x_labels,
+    limits = c(0, 30000)
   ) +
   scale_y_continuous(
-    breaks = c(0, 20, 40, 60, 80, 100),
-    labels = c("0", "20%", "40%", "<span style='color:red'>60%</span>", "80%", "100%")
+    breaks = c(0, 20, 40, 50, 60, 80, 100),
+    labels = c("0", "20%", "40%", "<span style='color:red'>50%</span>", "60%", "80%", "100%"),
+    limits = c(0, 100)
   ) +
-  scale_color_manual(values = "black") +
+  scale_color_manual(name="Replicate", values = "black") +
   xlab("Total UMIs") +
   ylab("UMIs in readout genes") +
   theme(
@@ -190,26 +215,27 @@ Seurat::FeatureScatter(
     axis.text.y = ggtext::element_markdown()
   )
 
-# Faceted
+# Are the barcodes with low ribosomal percentage the one we want to remove
 Seurat::FeatureScatter(
-  d0_data,
+  d0_data[,d0_data$percent.ribo < 20],
   feature1 = "nCount_RNA",
   feature2 = "percent_target_umis",
-  group.by = "orig.dose.chip",
-  split.by = "orig.dose.chip"
+  group.by = "all",
 ) +
-  ggtitle("Total UMIs vs UMIs in readout genes") +
-  geom_hline(yintercept = 60, linetype = "dashed", color = "red") +
+  ggtitle("Total UMIs vs UMIs in readout genes", subtitle = paste0("Ribosomal percentage < 20. n = ",ncol(d0_data[,d0_data$percent.ribo < 20]))) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "red") +
   geom_vline(xintercept = 1000, linetype = "dashed", color = "blue") +
   scale_x_continuous(
     breaks = x_breaks,
-    labels = x_labels
-  ) +
+    labels = x_labels,
+    limits = c(0, 30000)
+  )+
   scale_y_continuous(
-    breaks = c(0, 20, 40, 60, 80, 100),
-    labels = c("0", "20%", "40%", "<span style='color:red'>60%</span>", "80%", "100%")
+    breaks = c(0, 20, 40, 50, 60, 80, 100),
+    labels = c("0", "20%", "40%", "<span style='color:red'>50%</span>", "60%", "80%", "100%"),
+    limits = c(0, 100)
   ) +
-  scale_color_manual(values = palette_4_qual) +
+  scale_color_manual(name="Replicate", values = "black") +
   xlab("Total UMIs") +
   ylab("UMIs in readout genes") +
   theme(
@@ -217,7 +243,45 @@ Seurat::FeatureScatter(
     axis.text.x = ggtext::element_markdown(),
     axis.text.y = ggtext::element_markdown()
   )
+
+
+# Faceted
+Seurat::FeatureScatter(
+  d0_data,
+  feature1 = "nCount_RNA",
+  feature2 = "percent_target_umis",
+  group.by = "replicate",
+  split.by = "replicate"
+) +
+  ggtitle("Total UMIs vs UMIs in readout genes") +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 1000, linetype = "dashed", color = "blue") +
+  scale_x_continuous(
+    breaks = x_breaks,
+    labels = x_labels
+  ) +
+  scale_y_continuous(
+    breaks = c(0, 20, 40, 50, 60, 80, 100),
+    labels = c("0", "20%", "40%", "<span style='color:red'>50%</span>", "60%", "80%", "100%")
+  ) +
+  scale_color_manual(name="Replicate", values = palette_4_qual) +
+  xlab("Total UMIs") +
+  ylab("UMIs in readout genes") +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = ggtext::element_markdown(),
+    axis.text.y = ggtext::element_markdown(),
+  )
 ```
+
+```{r}
+# Get general statistics of barcodes per channel, replicate
+table(d0_data$chip, d0_data$batch)
+table(d0_data$chip, d0_data$channel)
+table(d0_data$replicate, d0_data$batch)
+
+```
+
 
 ### Compare CPM of readout genes vs non-readout genes
 ```{r}
@@ -274,27 +338,29 @@ write.table(
   col.names = c("gene_symbol", "ensembl_id", "mean_cpm"),
   sep = "\t"
   )
-message("Number of non-readout genes with mean CPM >= 100: ",length(high_cpm_non_readout_genes), "\n")
-# Add inner primer information to cpm_df
-metadata_primers_df$is_intended_target <- as.logical(metadata_primers_df$is_intended_target)
 
-non_readout_genes_with_primer <- unique(metadata_primers_df$gene_symbol[!metadata_primers_df$is_intended_target])
-message("Number of non-readout genes with inner primer: ", length(non_readout_genes_with_primer), "\n")
-
-cpm_df$has_inner_primer <- ifelse(cpm_df$gene %in% non_readout_genes_with_primer, "with_inner_primer", "without_inner_primer")
-# Subset to non-readout genes
-cpm_non_readout_df <- cpm_df[cpm_df$type == "non-readout" & cpm_df$mean_cpm >= 100, ]
-# Plot
-ggplot(cpm_non_readout_df, aes(x = has_inner_primer, y = mean_cpm + 1)) +
-  geom_boxplot(outlier.size = 0.5) +
-  scale_y_log10() +
-  ylab("Mean CPM (log10 scale)") +
-  xlab("") +
-  ggtitle("Mean CPM of non-readout genes by inner primer presence") +
-  theme(
-    plot.title = element_text(hjust = 0.5),
-  ) +
-  theme_minimal()
+# These need to be fixed
+# message("Number of non-readout genes with mean CPM >= 100: ",length(high_cpm_non_readout_genes), "\n")
+# # Add inner primer information to cpm_df
+# metadata_primers_df$is_intended_target <- as.logical(metadata_primers_df$is_intended_target)
+# 
+# non_readout_genes_with_primer <- unique(metadata_primers_df$gene_symbol[!metadata_primers_df$is_intended_target])
+# message("Number of non-readout genes with inner primer: ", length(non_readout_genes_with_primer), "\n")
+# 
+# cpm_df$has_inner_primer <- ifelse(cpm_df$gene %in% non_readout_genes_with_primer, "with_inner_primer", "without_inner_primer")
+# # Subset to non-readout genes
+# cpm_non_readout_df <- cpm_df[cpm_df$type == "non-readout" & cpm_df$mean_cpm >= 100, ]
+# # Plot
+# ggplot(cpm_non_readout_df, aes(x = has_inner_primer, y = mean_cpm + 1)) +
+#   geom_boxplot(outlier.size = 0.5) +
+#   scale_y_log10() +
+#   ylab("Mean CPM (log10 scale)") +
+#   xlab("") +
+#   ggtitle("Mean CPM of non-readout genes by inner primer presence") +
+#   theme(
+#     plot.title = element_text(hjust = 0.5),
+#   ) +
+#   theme_minimal()
 ```
 
 ### Number of genes per barcode
@@ -313,8 +379,8 @@ Seurat::FeatureScatter(
   d0_data,
   feature1 = "nCount_RNA",
   feature2 = "nFeature_RNA",
-  group.by = "orig.dose.chip",
-  split.by = "orig.dose.chip"
+  group.by = "replicate",
+  split.by = "replicate"
 ) +
   scale_color_manual(values = palette_4_qual) +
   xlab("Total UMIs") +
@@ -326,10 +392,10 @@ Seurat::FeatureScatter(
 ```
 
 ## Filter cells
-Using percentage of UMI from target genes >= 60% and number of UMIs >= 1000
+Using percentage of UMI from target genes >= 50%, percentage of ribosomal UMIs>=20, and number of UMIs >= 1000
 
 ```{r}
-d0_data_filtered = SeuratObject::subset(d0_data, subset = percent_target_umis >= 60 & nCount_RNA >= 1000)
+d0_data_filtered = subset(d0_data, subset = percent_target_umis >= 50 & nCount_RNA >= 1000 & percent.ribo > 20)
 d0_data_filtered
 message("Number of cells before filtering: ", ncol(d0_data), "\n")
 message("Number of cells filtered out: ", ncol(d0_data) - ncol(d0_data_filtered), "\n")
@@ -372,6 +438,6 @@ write.table(
 ```{r}
 SeuratObject::SaveSeuratRds(
   d0_data_filtered_norm,
-  file = paste0(output_folder,"/d0_seurat_object_filtered_norm.rds")
+  file = paste0(output_folder,"/seurat_object_filtered_norm.rds")
   )
 ```

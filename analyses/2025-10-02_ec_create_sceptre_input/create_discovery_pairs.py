@@ -106,7 +106,7 @@ def _(guide_accession_map, pd, unmapped_guide_file):
         how='left'
     )
     unmapped_guides.head()
-    return
+    return (unmapped_guides,)
 
 
 @app.cell
@@ -542,7 +542,41 @@ def _(discovery_pairs_final, positive_pairs_final, targeted_elements):
 
 @app.cell
 def _(all_unused_guides):
-    len(all_unused_guides)
+    len(set(all_unused_guides))
+    return
+
+
+@app.cell
+def _(all_unused_guides, csv, pd, unmapped_guides):
+    # Tag unmapped as non-targeting
+    unmapped_guides['grna_target'] = 'non-targeting'
+    unmapped_guides_final = (
+        unmapped_guides[['guide_id', 'grna_target']]
+        .rename(columns={'guide_id': 'grna_id'})
+    )
+
+    # Turn all_unused_guides into a DataFrame with the same schema
+    nt_from_unused = pd.DataFrame(
+        {'grna_id': sorted(set(all_unused_guides))}
+    )
+    nt_from_unused['grna_target'] = 'non-targeting'
+
+    # Combine both sources, keep one row per grna_id
+    non_targeting = (
+        pd.concat([unmapped_guides_final, nt_from_unused], ignore_index=True)
+          .drop_duplicates(subset='grna_id', keep='first')
+          .reset_index(drop=True)
+    )
+
+    non_targeting.to_csv(
+        "results/2025-09-15/sceptre_non_targeting_guides_hg38.tsv",
+        sep='\t',
+        index=False,
+        header=False,
+        quoting=csv.QUOTE_NONE
+    )
+
+    non_targeting
     return
 
 

@@ -116,10 +116,9 @@ def find_primers_with_pysam(primer_file, fasta_file, output_file, outer_col=None
 
 # Example usage:
 if __name__ == "__main__":
-    cell_line = "HPC"
-    primer_csv = f"../metadata/hiPSC-{cell_line}/metadata_genes.csv"
-    fasta_file = "/Users/emattei/Annotations/HG38/GENCODE/gencode.v44.transcripts.fa.bgz"
-    output_file = f"../metadata/hiPSC-{cell_line}/primer_matches_updated_names.csv"
+    primer_csv = f"../../metadata/metadata_genes_raw.csv"
+    fasta_file = "../../annotations/gencode.v44.transcripts.fa.bgz"
+    output_file = f"../../results/2025-10-08_create_gene_metadata/intermediates/primer_matches_results.csv"
 
     find_primers_with_pysam(primer_csv, fasta_file, output_file, outer_col="outer_primer", inner_col="inner_primer", target_col="intended_target_gene_symbol")
 
