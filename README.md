@@ -8,7 +8,7 @@ The analyses are organized in subdirectories named by date (`YYYY-MM-DD`) under 
 Results are stored in the `results/` directory, organized by date corresponding to the analysis that generated them.
 
 ## Analyses and results
-- [hiPSC → HPC differentiation large screen](./analyses/README.md#hipsc--hpc-differentiation-large-screen)
+ - [Gene Metadata Annotation](./analyses/00-2025-10-08_create_gene_metadata/README.md)
 - [hiPSC → EC differentiation large screen](./analyses/README.md#hipsc--ec-differentiation-large-screen)
 
 ## Contributors

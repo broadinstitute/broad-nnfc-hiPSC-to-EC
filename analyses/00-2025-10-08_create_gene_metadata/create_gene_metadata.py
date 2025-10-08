@@ -45,7 +45,6 @@ def _(mo):
 def _(pd):
     map_results = pd.read_csv("results/2025-10-08_create_gene_metadata/intermediates/primer_matches_results.csv")
     map_results
-
     return (map_results,)
 
 
