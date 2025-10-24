@@ -1,0 +1,18 @@
+---
+title: "02-gRNA-QC"
+output: html_document
+---
+
+```{r}
+output_folder <- "results/2025-10-07_ec_sceptre_analysis/"
+```
+
+# Load sceptre object
+```{r}
+sceptre_object = readRDS(paste0("../",output_folder,"sceptre_object.rds"))
+```
+
+```{r}
+
+```
+

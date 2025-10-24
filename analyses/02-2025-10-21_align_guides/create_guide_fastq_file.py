@@ -221,7 +221,7 @@ def _(guide_metadata_deduplicated):
     guide_metadata_reduced = guide_metadata_deduplicated[["OligoID", "locus", "guideSet","ordered_sequence"]]
 
     # I am not saving this anymore because incorrect
-    #guide_metadata_reduced.to_csv("results/2025-10-01_ec_guide_annotation/metadata_guide_reduced_oligo_stripped.csv", header=True, index=False)
+    #guide_metadata_reduced.to_csv("results/02-2025-10-21_annotate_guides/metadata_guide_reduced_oligo_stripped.csv", header=True, index=False)
     guide_metadata_reduced
     return (guide_metadata_reduced,)
 
@@ -307,7 +307,7 @@ def _(feature_reference, get_hgrm_accession, guide_metadata_reduced):
             result_type='expand'
         )
 
-        guide_metadata_deduplicated.to_csv("results/2025-10-01_ec_guide_annotation/metadata_guides_with_accession.csv", index=False)
+        guide_metadata_deduplicated.to_csv("results/02-2025-10-21_annotate_guides/metadata_guides_with_accession.csv", index=False)
         return guide_metadata_deduplicated
 
 
@@ -396,7 +396,7 @@ def _(feature_reference):
     final_content = '\n'.join(fastq_records_series.tolist())
 
     # Write the final string to the output file
-    with open("results/2025-10-01_ec_guide_annotation/ec_differentiation.fastq", 'w') as f:
+    with open("results/02-2025-10-21_annotate_guides/ec_differentiation.fastq", 'w') as f:
         f.write(final_content + '\n')
     return
 
@@ -422,7 +422,7 @@ def _(feature_reference):
         final_content = '\n'.join(fastq_records_series.tolist())
 
         # Write the final string to the output file
-        with open("results/2025-10-01_ec_guide_annotation/ec_differentiation_with_pam.fastq", 'w') as f:
+        with open("results/02-2025-10-21_annotate_guides/ec_differentiation_with_pam.fastq", 'w') as f:
             return f.write(final_content + '\n')
 
 
@@ -451,7 +451,7 @@ def _(feature_reference):
         final_content = '\n'.join(fastq_records_series.tolist())
 
         # Write the final string to the output file
-        with open("results/2025-10-01_ec_guide_annotation/ec_differentiation_with_pam_and_leading_g.fastq", 'w') as f:
+        with open("results/02-2025-10-21_annotate_guides/ec_differentiation_with_pam_and_leading_g.fastq", 'w') as f:
             return f.write(final_content + '\n')
 
 

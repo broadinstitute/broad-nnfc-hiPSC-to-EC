@@ -112,7 +112,7 @@ positive_control_pairs$response_id <- gene_map$gene_symbol[match(positive_contro
 
 d0_merged_layer <- JoinLayers(d0_seurat_object[["RNA"]], new.layer.name = "counts", layers = "counts")
 rna_counts <- GetAssayData(d0_merged_layer, assay = "RNA", layer = "counts")
-grna_counts <- GetAssayData(d0_seurat_object, assay = "gRNA", layer = "counts")
+grna_counts <- GetAssayData(d0_seurat_object, assay = "gRNA")
 message("Dimensions of RNA count matrix: ", paste(dim(rna_counts), collapse = " x "))
 message("Dimensions of gRNA count matrix: ", paste(dim(grna_counts), collapse = " x "))
 
