@@ -5,7 +5,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-# Day 0 of hiPSC-EC differentiation, analyzed with SCEPTRE
+# hiPSC-EC differentiation, analyzed with SCEPTRE
 
 ```{r}
 library(Seurat)
@@ -35,10 +35,11 @@ SCEPTRE required as inputs:
  - negative control gRNAs: `results/2025-09-15/grna_non_targeting_input.tsv`
 ```{r}
 # PARAMS
-selected_day = 2
-ribo_threshold = 16
-target_umi_threshold = 45
+selected_day = 4
+ribo_threshold = 6
+target_umi_threshold = 25
 umi_threshold = 1000
+n_processors = 8
 
 # INPUTS
 metadata_samples_fnp <- "../../metadata/metadata_sample_endothelial_terra.tsv"
@@ -245,7 +246,7 @@ sceptre_object = sceptre::import_data(
   grna_target_data_frame = grna_to_element_with_non_targeting_map,
   moi = "high",
 )
-sceptre_object
+print(sceptre_object)
 
 # Make sure the genes are present in the pairs
 all(unique(c(discovery_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
@@ -259,38 +260,36 @@ sceptre_object <- set_analysis_parameters(
   positive_control_pairs = positive_control_pairs,
   side = "both"
 )
-sceptre_object
+print(sceptre_object)
 ```
 
 
 ```{r}
-plot_grna_count_distributions(sceptre_object)
+#plot_grna_count_distributions(sceptre_object)
 # Assign gRNAs to cells using `thresholding` method and 10 UMIs threshold
 sceptre_object <- assign_grnas(
   sceptre_object = sceptre_object,
   parallel = TRUE,
   method = "thresholding",
   threshold = 5,
-  n_processors = 2
+  n_processors = n_processors
 )
 
-plot(sceptre_object)
+print(sceptre_object)
 ```
 
 ## Quality control
 
 ```{r}
 sceptre_object <- run_qc(sceptre_object)
-plot(sceptre_object)
-sceptre_object
+print(sceptre_object)
 
 # compute the number of cells per element
 element_grna_counts <- sapply(sceptre_object@grna_assignments$grna_group_idxs, function(idxs) {
   length(idxs)
 })
-head(element_grna_counts)
-# Plot the distribution of number of gRNAs per element
 
+# Plot the distribution of number of gRNAs per element
 histogram_data <- hist(element_grna_counts, breaks = 30, plot = FALSE)
 
 # 2. Find the overall maximum count (the tallest bar)
@@ -301,16 +300,15 @@ y_target_position <- max_bar_height
 
 p <- ggplot(data.frame(num_cells = element_grna_counts), aes(x = num_cells)) +
   geom_histogram(bins = 50, fill = "lightblue", color = "black") +
-  geom_vline(xintercept = median(element_grna_counts), color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = median(element_grna_counts), color = "red", linetype = "dashed", linewidth = 1) +
   labs(title = "Distribution of number of cells per element",
        subtitle = paste0("Day ", selected_day, " - Number of elements (n=", length(element_grna_counts), ")"),
        x = "Number of cells per element",
        y = "Number of elements") +
   annotate("text", x = median(element_grna_counts) * 1.5, y = y_target_position,
            label = paste0("Median: ", round(median(element_grna_counts), 2)),
-           color = "red", linewidth = 5) +
+           color = "red", size = 5) +
   theme_minimal(base_size = 14)
-
 
 save_ggplot(plot = p, filename = paste0(output_folder,"/sceptre_number_of_cells_per_element_day",selected_day,".png"))
 save_ggplot(plot = p, filename = paste0(output_folder,"/sceptre_number_of_cells_per_element_day",selected_day,".pdf"))
@@ -319,20 +317,20 @@ save_ggplot(plot = p, filename = paste0(output_folder,"/sceptre_number_of_cells_
 ## Calibration check
 
 ```{r}
-sceptre_object <- run_calibration_check(sceptre_object, parallel = TRUE, n_processors = 8)
-plot(sceptre_object) # output suppressed for brevity
+sceptre_object <- run_calibration_check(sceptre_object, parallel = TRUE, n_processors = n_processors)
+print(sceptre_object)
 ```
 
 ## Power Check
 ```{r}
-sceptre_object <- run_power_check(sceptre_object, parallel = TRUE, n_processors = 2)
-plot(sceptre_object) # output suppressed for brevity
+sceptre_object <- run_power_check(sceptre_object, parallel = TRUE, n_processors = n_processors)
+print(sceptre_object)
 ```
 
 ## Run the discovery analysis
 ```{r}
-sceptre_object <- run_discovery_analysis(sceptre_object, parallel = TRUE, n_processors = 2)
-print(sceptre_object) # output suppressed for brevity
+sceptre_object <- run_discovery_analysis(sceptre_object, parallel = TRUE, n_processors = n_processors)
+print(sceptre_object)
 ```
 
 ## Write outputs
