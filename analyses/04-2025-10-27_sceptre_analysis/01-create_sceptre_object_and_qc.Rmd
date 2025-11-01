@@ -11,6 +11,16 @@ editor_options:
 library(Seurat)
 library(sceptre)
 source("scripts/R/utils.R")
+
+save_ggplot <- function(plot, filename, width = 8, height = 6, dpi = 300) {
+  ggsave(
+    filename = filename,
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = dpi
+  )
+}
 ```
 
 
@@ -23,83 +33,101 @@ SCEPTRE required as inputs:
  - discovery pairs: `results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv`
  - negative control gRNAs: `results/2025-09-15/grna_non_targeting_input.tsv`
 ```{r}
-output_folder <- "results/2025-10-07_ec_sceptre_analysis/"
+# PARAMS
+selected_day = 0
+ribo_threshold = 21
+target_umi_threshold = 55
+umi_threshold = 1500
+
+# INPUTS
+metadata_samples_fnp <- "metadata/metadata_sample_endothelial_terra.tsv"
+metadata_genes_fnp <- "metadata/metadata_genes_final.csv"
+metadata_guides_fnp <- "metadata/guide_metadata_with_new_accessions.tsv"
+grna_to_element_map_fnp <- "results/03-2025-10-24_create_sceptre_input/grna_to_element_df.tsv"
+discovery_pairs_fnp <- "results/03-2025-10-24_create_sceptre_input/discovery_pairs_no_pos_hg38_readout_genes.tsv"
+positive_pairs_fnp <- "results/03-2025-10-24_create_sceptre_input/positive_pairs_hg38_readout_genes.tsv"
+negative_controls_fnp <- "results/03-2025-10-24_create_sceptre_input/non_targeting_grna.tsv"
+
+multimap_guide_fnp <- "results/02-2025-10-21_align_guides/guides-with-more-than-1-alignment.txt"
+
+# OUTPUTS
+output_folder <- paste0("results/04-2025-10-27_sceptre_analysis/day",selected_day)
 dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
-
-seurat_rds_fnp <- "results/2025-10-07_ec_sceptre_analysis/seurat_object_filtered_norm.rds"
-
-grna_to_element_map_fnp <- "results/2025-10-02_ec_create_sceptre_input/grna_to_element_mapping_hg38.tsv"
-
-positive_control_pairs_fnp <- "results/2025-09-15/positive_pairs_hg38_readout_genes.tsv"
-discovery_pairs_fnp <- "results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv"
-
-non_targeting_fnp <- "results/2025-09-15/sceptre_non_targeting_guides_hg38.tsv"
-
-gene_id_mappings <- "results/2025-09-15/intermediates/gencode_tss.bed"
-
-guide_id_mappings <- "metadata/hiPSC-EC/metadata_guides_with_accession.csv"
 ```
 
 Load all the data
 ```{r}
-# Load data
-d0_seurat_object <- readRDS(seurat_rds_fnp)
-d0_seurat_object
-```
-
-```{r}
-guide_metadata <- read.csv(guide_id_mappings, stringsAsFactors = FALSE)
-guide_metadata$name_sanitized <- gsub("_", "-", guide_metadata$name)
+guide_metadata <- read.csv(metadata_guides_fnp, stringsAsFactors = FALSE, sep="\t")
+guide_metadata$aliases <- gsub("_", "-", guide_metadata$aliases)
 head(guide_metadata)
+
+multimap_guide <- read.csv(multimap_guide_fnp, header = FALSE, stringsAsFactors = FALSE, col.names = "aliases")
+message("Number of multi-mapping guides: ", nrow(multimap_guide))
+multimap_guide$aliases <- gsub("_", "-", multimap_guide$aliases)
+multimap_guide$grna_id <- guide_metadata$guide_id[match(multimap_guide$aliases, guide_metadata$aliases)]
 
 grna_to_element_map <- read.delim(grna_to_element_map_fnp, header = TRUE, stringsAsFactors = FALSE)
 message("Number of gRNA to element mappings: ", nrow(grna_to_element_map))
-positive_control_pairs <- read.delim(positive_control_pairs_fnp, header=F, stringsAsFactors = FALSE)
+grna_to_element_map <- grna_to_element_map[!grna_to_element_map$grna_id %in% multimap_guide$grna_id, ]
+message("Number of gRNA to element mappings after removing multi-mapping guides: ", nrow(grna_to_element_map))
+
+positive_control_pairs <- read.delim(positive_pairs_fnp, header=F, stringsAsFactors = FALSE)
+colnames(positive_control_pairs) <- c("grna_target", "response_id")
 message("Number of positive control pairs: ", nrow(positive_control_pairs))
+positive_control_pairs <- positive_control_pairs[positive_control_pairs$grna_target %in% grna_to_element_map$grna_target, ]
+message("Number of positive control pairs after filtering to gRNA to element map: ", nrow(positive_control_pairs))
+
 discovery_pairs <- read.delim(discovery_pairs_fnp, header=F, stringsAsFactors = FALSE)
+colnames(discovery_pairs) <- c("grna_target", "response_id")
 message("Number of discovery pairs: ", nrow(discovery_pairs))
-non_targeting <- read.delim(non_targeting_fnp, header=F, stringsAsFactors = FALSE)
+discovery_pairs <- discovery_pairs[discovery_pairs$grna_target %in% grna_to_element_map$grna_target, ]
+message("Number of discovery pairs after filtering to gRNA to element map: ", nrow(discovery_pairs))
+
+non_targeting <- read.delim(negative_controls_fnp, header=F, stringsAsFactors = FALSE)
+colnames(non_targeting) <- c("grna_id", "grna_target")
 message("Number of non-targeting gRNAs: ", nrow(non_targeting))
 
+
+# Verify that all the elements in the pairs are in the gRNA to element map
+all(positive_control_pairs$grna_target %in% grna_to_element_map$grna_target)
+all(discovery_pairs$grna_target %in%  grna_to_element_map$grna_target)
+
+
 message("Number of elements: ", length(unique(grna_to_element_map$grna_target)))
-gene_map <- read.delim(gene_id_mappings, header = FALSE, stringsAsFactors = FALSE)
-colnames(gene_map) <- c("chrom", "tss_start", "tss_end", "transcript_id", "score", "strand", "gene_id", "gene_type", "gene_symbol")
-gene_map <- unique(gene_map[, c("gene_id", "gene_symbol")])
+
+# Plot the number of guides per element in the discovery pairs
+grna_per_element <- table(grna_to_element_map$grna_target)
+hist(grna_per_element[discovery_pairs$V1], breaks = 50, main = "Number of gRNAs per element", xlab = "Number of gRNAs per element")
+
+
+gene_map <- read.csv(metadata_genes_fnp, header = TRUE, stringsAsFactors = FALSE)
+head(gene_map)
+gene_map <- unique(gene_map[, c("intended_target_gene_id", "intended_target_gene_symbol")])
+colnames(gene_map) <- c("gene_id", "gene_symbol")
 gene_map$gene_id_no_versions <- gsub("\\..*$", "", gene_map$gene_id)
 head(gene_map)
 
-discovery_pairs$V2 <- gsub("\\..*$", "", discovery_pairs$V2)
-positive_control_pairs$V2 <- gsub("\\..*$", "", positive_control_pairs$V2)
+discovery_pairs$response_id <- gsub("\\..*$", "", discovery_pairs$response_id)
+positive_control_pairs$response_id <- gsub("\\..*$", "", positive_control_pairs$response_id)
 ```
 
 ## Prepare inputs for SCEPTRE 
 
 ```{r}
-# Assign the column names that SCEPTRE expects
-colnames(positive_control_pairs) <- c("grna_target", "response_id")
-colnames(discovery_pairs) <- c("grna_target", "response_id")
-
-# Append the non-targeting gRNAs to the gRNA to element map
-colnames(non_targeting) <- colnames(grna_to_element_map)
-
 # convert ids
-grna_to_element_map$old_id = guide_metadata$name_sanitized[match(grna_to_element_map$grna_id, guide_metadata$accession_id)]
-
-
-tmp = grna_to_element_map[,c("old_id", "grna_target")]
-colnames(tmp) = c("grna_id", "grna_target")
-
 rbind(
-  tmp,
+  grna_to_element_map[,c("grna_id", "grna_target")],
   non_targeting
 ) -> grna_to_element_with_non_targeting_map
+
+tmp = guide_metadata$aliases[match(grna_to_element_with_non_targeting_map$grna_id, guide_metadata$guide_id)]
+grna_to_element_with_non_targeting_map$grna_id = tmp
+head(grna_to_element_with_non_targeting_map)
 
 # Change the '_' to '-' in the gRNA IDs to match the gRNA count matrix
 grna_to_element_with_non_targeting_map$grna_id <- gsub("_", "-", grna_to_element_with_non_targeting_map$grna_id)
 
 message("Number of gRNA to element mappings (including non-targeting): ", nrow(grna_to_element_with_non_targeting_map))
-
-
 
 # Check that all gRNAs in the pairs are in the gRNA to element map
 all(positive_control_pairs$grna_target %in% grna_to_element_with_non_targeting_map$grna_target)
@@ -110,25 +138,101 @@ discovery_pairs$response_id <- gene_map$gene_symbol[match(discovery_pairs$respon
 # Change the positive control pairs response_id column to gene_symbols
 positive_control_pairs$response_id <- gene_map$gene_symbol[match(positive_control_pairs$response_id, gene_map$gene_id_no_versions)]
 
-d0_merged_layer <- JoinLayers(d0_seurat_object[["RNA"]], new.layer.name = "counts", layers = "counts")
-rna_counts <- GetAssayData(d0_merged_layer, assay = "RNA", layer = "counts")
-grna_counts <- GetAssayData(d0_seurat_object, assay = "gRNA")
+# Change the grna_id to be the old ones
+tmp = guide_metadata$aliases[match(discovery_pairs$grna_id, guide_metadata$guide_id)]
+grna_to_element_with_non_targeting_map$grna_id = tmp
+head(grna_to_element_with_non_targeting_map)
+```
+
+## Create Seurat object and filter
+```{r}
+metadata_samples_fnp <- "metadata/metadata_sample_endothelial_terra.tsv"
+metadata_samples_df <- read.delim(metadata_samples_fnp, header = TRUE, stringsAsFactors = FALSE)
+head(metadata_samples_df)
+
+h5_files_fnp <- list.files(path = "data/h5", pattern = "*.h5", full.names = TRUE, recursive = TRUE)
+
+h5_sample_names = metadata_samples_df$entity.endothelial_id[ metadata_samples_df$day == selected_day]
+h5_files_fnp = h5_files_fnp[basename(h5_files_fnp) %in% paste0(h5_sample_names,"_sample_filtered_feature_bc_matrix.h5")]
+
+# Load data
+seurat_objects_list <- mapply(
+  read_10x_rna_grna,
+  h5 = h5_files_fnp,
+  sample_name = h5_sample_names,
+  SIMPLIFY = FALSE
+)
+
+names(seurat_objects_list) <- h5_sample_names
+
+data <- merge(x = seurat_objects_list[[1]], 
+                 y = seurat_objects_list[2:length(seurat_objects_list)],
+                 merge.data = TRUE,
+                 add.cell.ids = h5_sample_names)
+Assays(data)
+data@meta.data$all = "Combined"
+
+rm(seurat_objects_list)
+gc()
+
+metadata_genes_df <- read.csv(metadata_genes_fnp, stringsAsFactors = FALSE)
+target_genes <- unique(metadata_genes_df$intended_target_gene_symbol) # Because we have multiple primers for the same gene
+message("Number of target genes: ", length(target_genes))
+
+data[["percent.mt"]] <- Seurat::PercentageFeatureSet(data, pattern = "^MT-", assay = "RNA")
+data[["percent.ribo"]] <- Seurat::PercentageFeatureSet(data, pattern = "^RPS|^RPL|^RRP|^MRP|^FAU", assay = "RNA")
+# Get the layer names
+layers <- grep("^counts", Layers(data[["RNA"]]), value = TRUE)
+# Iterate and compute percent of UMIs in target genes
+pct_list <- lapply(layers, function(ly) {
+  M <- SeuratObject::GetAssayData(data, assay = "RNA", layer = ly)
+  present <- intersect(target_genes, rownames(M))
+  tot <- Matrix::colSums(M)
+  tgt <- if (length(present)) Matrix::colSums(M[present, , drop = FALSE]) else rep(0, length(tot))
+  setNames(ifelse(tot > 0, 100 * tgt / tot, 0), colnames(M))
+})
+
+# Combine results
+pct_vec <- do.call(c, pct_list)
+pct_vec <- pct_vec[colnames(data)]
+
+# Add to metadata
+data$percent_target_umis <- pct_vec
+
+message("Filtering cells with percent_target_umis >= ", target_umi_threshold, 
+        ", nCount_RNA >= ", umi_threshold,
+        " and percent.ribo >= ", ribo_threshold, "\n")
+data_filtered = subset(data, subset = percent_target_umis >= target_umi_threshold & nCount_RNA >= umi_threshold & percent.ribo >= ribo_threshold)
+data_filtered
+message("Number of cells before filtering: ", ncol(data), "\n")
+message("Number of cells filtered out: ", ncol(data) - ncol(data_filtered), "\n")
+message("Number of cells after filtering: ", ncol(data_filtered), "\n")
+
+rm(data)
+```
+
+## Extract matrices for SCEPTRE
+```{r}
+
+merged_layer <- JoinLayers(data_filtered[["RNA"]], new.layer.name = "merged", layers = "counts")
+rna_counts <- GetAssayData(merged_layer, assay = "RNA", layer = "counts")
+grna_counts <- GetAssayData(data_filtered, assay = "gRNA")
 message("Dimensions of RNA count matrix: ", paste(dim(rna_counts), collapse = " x "))
 message("Dimensions of gRNA count matrix: ", paste(dim(grna_counts), collapse = " x "))
 
 # Check that the cell barcodes match between the RNA and gRNA count matrices
 all(colnames(rna_counts) == colnames(grna_counts))
 # Check that the gRNAs in the gRNA count matrix are in the gRNA to element map
-all(rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id)
+#all(rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id)
 table(rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id)
 
 
 # Subset the RNA count matrix to only the readout genes
 present <- unique(c(positive_control_pairs$response_id, discovery_pairs$response_id))
-present <- present[present %in% gene_map$gene_symbol]
+present <- present[present %in% gene_map$gene_id_no_versions]
 length(present)
 
-rna_counts_readout_only <- rna_counts[gene_map$gene_symbol[match(present, gene_map$gene_symbol)], , drop = FALSE]
+rna_counts_readout_only <- rna_counts[gene_map$gene_symbol[match(present, gene_map$gene_id_no_versions)], , drop = FALSE]
 message("Dimensions of RNA count matrix (subset to readout genes): ", paste(dim(rna_counts_readout_only), collapse = " x "))
 
 grna_presents <- rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id
@@ -150,14 +254,15 @@ sceptre_object = sceptre::import_data(
 sceptre_object
 
 # Make sure the genes are present in the pairs
-unique(c(discovery_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]])
+all(unique(c(discovery_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
+all(unique(c(positive_control_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
 
 
 # Set the analysis parameters
 sceptre_object <- set_analysis_parameters(
   sceptre_object = sceptre_object,
-  discovery_pairs = discovery_pairs[c(-1),],
-  positive_control_pairs = positive_control_pairs[c(-1),],
+  discovery_pairs = discovery_pairs,
+  positive_control_pairs = positive_control_pairs,
   side = "both"
 )
 sceptre_object
@@ -171,7 +276,7 @@ sceptre_object <- assign_grnas(
   sceptre_object = sceptre_object,
   parallel = TRUE,
   method = "thresholding",
-  threshold = 10,
+  threshold = 5,
   n_processors = 2
 )
 
@@ -183,17 +288,38 @@ plot(sceptre_object)
 ```{r}
 sceptre_object <- run_qc(sceptre_object)
 plot(sceptre_object)
-```
+sceptre_object
+
+# compute the number of cells per element
+element_grna_counts <- sapply(sceptre_object@grna_assignments$grna_group_idxs, function(idxs) {
+  length(idxs)
+})
+head(element_grna_counts)
+# Plot the distribution of number of gRNAs per element
+
+histogram_data <- hist(element_grna_counts, breaks = 30, plot = FALSE)
+
+# 2. Find the overall maximum count (the tallest bar)
+max_bar_height <- max(histogram_data$counts)
+
+# 3. Calculate the target Y position (50% of the max height)
+y_target_position <- max_bar_height
+
+p <- ggplot(data.frame(num_cells = element_grna_counts), aes(x = num_cells)) +
+  geom_histogram(bins = 50, fill = "lightblue", color = "black") +
+  geom_vline(xintercept = median(element_grna_counts), color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Distribution of number of cells per element",
+       subtitle = paste0("Day ", selected_day, " - Number of elements (n=", length(element_grna_counts), ")"),
+       x = "Number of cells per element",
+       y = "Number of elements") +
+  annotate("text", x = median(element_grna_counts) * 1.5, y = y_target_position,
+           label = paste0("Median: ", round(median(element_grna_counts), 2)),
+           color = "red", size = 5) +
+  theme_minimal(base_size = 14)
 
 
-```{r}
-# Iterate through sceptre_object@grna_assignments$grna_group_idxs and get the number of cells assigned to each element
-median_cells_per_element <- median(sapply(sceptre_object@grna_assignments$grna_group_idxs, length))
-# Plot the distribution of number of cells assigned to each element
-hist(sapply(sceptre_object@grna_assignments$grna_group_idxs, length), breaks = 50, main = "Distribution of number of cells assigned to each element", xlab = "Number of cells assigned to element")
-abline(v = median_cells_per_element, col = "red", lwd = 2, lty = 3)
-legend_text <- paste0("Median: ", round(median_cells_per_element, 2))
-legend("topright", legend = legend_text, col = "red", lwd = 2, lty = 3, bty = "n")
+save_ggplot(plot = p, filename = paste0(output_folder,"/sceptre_number_of_cells_per_element_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/sceptre_number_of_cells_per_element_day",selected_day,".pdf"))
 ```
 
 ## Calibration check
@@ -219,18 +345,18 @@ print(sceptre_object) # output suppressed for brevity
 ```{r}
 write_outputs_to_directory(
   sceptre_object = sceptre_object,
-  directory = paste0(output_folder,"sceptre_outputs")
+  directory = paste0(output_folder,"sceptre_outputs_day",selected_day)
 )
 ```
 
 ```{r}
-result <- get_result(
-  sceptre_object = sceptre_object,
-  analysis = "run_discovery_analysis"
-)
+#result <- get_result(
+#  sceptre_object = sceptre_object,
+#  analysis = "run_discovery_analysis"
+#)
 ```
 
 ```{r}
-saveRDS(sceptre_object, file = paste0(output_folder,"sceptre_object.rds"))
+saveRDS(sceptre_object, file = paste0(output_folder,"sceptre_object_day",selected_day,".rds"))
 ```
 
