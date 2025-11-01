@@ -361,6 +361,6 @@ write.csv(tmp_result,
 ```
 
 ```{r}
-saveRDS(sceptre_object, file = paste0(output_folder,"sceptre_object.rds"))
+saveRDS(sceptre_object, file = paste0(output_folder,"/sceptre_outputs/sceptre_object.rds"))
 ```
 
