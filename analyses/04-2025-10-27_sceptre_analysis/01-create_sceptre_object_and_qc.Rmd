@@ -10,7 +10,8 @@ editor_options:
 ```{r}
 library(Seurat)
 library(sceptre)
-source("scripts/R/utils.R")
+library(ggplot2)
+source("../../scripts/R/utils.R")
 
 save_ggplot <- function(plot, filename, width = 8, height = 6, dpi = 300) {
   ggsave(
@@ -34,24 +35,24 @@ SCEPTRE required as inputs:
  - negative control gRNAs: `results/2025-09-15/grna_non_targeting_input.tsv`
 ```{r}
 # PARAMS
-selected_day = 0
-ribo_threshold = 21
-target_umi_threshold = 55
-umi_threshold = 1500
+selected_day = 2
+ribo_threshold = 16
+target_umi_threshold = 45
+umi_threshold = 1000
 
 # INPUTS
-metadata_samples_fnp <- "metadata/metadata_sample_endothelial_terra.tsv"
-metadata_genes_fnp <- "metadata/metadata_genes_final.csv"
-metadata_guides_fnp <- "metadata/guide_metadata_with_new_accessions.tsv"
-grna_to_element_map_fnp <- "results/03-2025-10-24_create_sceptre_input/grna_to_element_df.tsv"
-discovery_pairs_fnp <- "results/03-2025-10-24_create_sceptre_input/discovery_pairs_no_pos_hg38_readout_genes.tsv"
-positive_pairs_fnp <- "results/03-2025-10-24_create_sceptre_input/positive_pairs_hg38_readout_genes.tsv"
-negative_controls_fnp <- "results/03-2025-10-24_create_sceptre_input/non_targeting_grna.tsv"
+metadata_samples_fnp <- "../../metadata/metadata_sample_endothelial_terra.tsv"
+metadata_genes_fnp <- "../../metadata/metadata_genes_final.csv"
+metadata_guides_fnp <- "../../metadata/guide_metadata_with_new_accessions.tsv"
+grna_to_element_map_fnp <- "../../results/03-2025-10-24_create_sceptre_input/grna_to_element_df.tsv"
+discovery_pairs_fnp <- "../../results/03-2025-10-24_create_sceptre_input/discovery_pairs_no_pos_hg38_readout_genes.tsv"
+positive_pairs_fnp <- "../../results/03-2025-10-24_create_sceptre_input/positive_pairs_hg38_readout_genes.tsv"
+negative_controls_fnp <- "../../results/03-2025-10-24_create_sceptre_input/non_targeting_grna.tsv"
 
-multimap_guide_fnp <- "results/02-2025-10-21_align_guides/guides-with-more-than-1-alignment.txt"
+multimap_guide_fnp <- "../../results/02-2025-10-21_align_guides/guides-with-more-than-1-alignment.txt"
 
 # OUTPUTS
-output_folder <- paste0("results/04-2025-10-27_sceptre_analysis/day",selected_day)
+output_folder <- paste0("../../results/04-2025-10-27_sceptre_analysis/day",selected_day)
 dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
 ```
 
@@ -95,11 +96,6 @@ all(discovery_pairs$grna_target %in%  grna_to_element_map$grna_target)
 
 message("Number of elements: ", length(unique(grna_to_element_map$grna_target)))
 
-# Plot the number of guides per element in the discovery pairs
-grna_per_element <- table(grna_to_element_map$grna_target)
-hist(grna_per_element[discovery_pairs$V1], breaks = 50, main = "Number of gRNAs per element", xlab = "Number of gRNAs per element")
-
-
 gene_map <- read.csv(metadata_genes_fnp, header = TRUE, stringsAsFactors = FALSE)
 head(gene_map)
 gene_map <- unique(gene_map[, c("intended_target_gene_id", "intended_target_gene_symbol")])
@@ -139,18 +135,15 @@ discovery_pairs$response_id <- gene_map$gene_symbol[match(discovery_pairs$respon
 positive_control_pairs$response_id <- gene_map$gene_symbol[match(positive_control_pairs$response_id, gene_map$gene_id_no_versions)]
 
 # Change the grna_id to be the old ones
-tmp = guide_metadata$aliases[match(discovery_pairs$grna_id, guide_metadata$guide_id)]
-grna_to_element_with_non_targeting_map$grna_id = tmp
 head(grna_to_element_with_non_targeting_map)
 ```
 
 ## Create Seurat object and filter
 ```{r}
-metadata_samples_fnp <- "metadata/metadata_sample_endothelial_terra.tsv"
 metadata_samples_df <- read.delim(metadata_samples_fnp, header = TRUE, stringsAsFactors = FALSE)
 head(metadata_samples_df)
 
-h5_files_fnp <- list.files(path = "data/h5", pattern = "*.h5", full.names = TRUE, recursive = TRUE)
+h5_files_fnp <- list.files(path = "../../data/h5", pattern = "*.h5", full.names = TRUE, recursive = TRUE)
 
 h5_sample_names = metadata_samples_df$entity.endothelial_id[ metadata_samples_df$day == selected_day]
 h5_files_fnp = h5_files_fnp[basename(h5_files_fnp) %in% paste0(h5_sample_names,"_sample_filtered_feature_bc_matrix.h5")]
@@ -229,10 +222,11 @@ table(rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id)
 
 # Subset the RNA count matrix to only the readout genes
 present <- unique(c(positive_control_pairs$response_id, discovery_pairs$response_id))
-present <- present[present %in% gene_map$gene_id_no_versions]
+present <- present[present %in% gene_map$gene_symbol]
 length(present)
 
-rna_counts_readout_only <- rna_counts[gene_map$gene_symbol[match(present, gene_map$gene_id_no_versions)], , drop = FALSE]
+#rna_counts_readout_only <- rna_counts[gene_map$gene_symbol[match(present, gene_map$gene_id_no_versions)], , drop = FALSE]
+rna_counts_readout_only <- rna_counts[present, , drop = FALSE]
 message("Dimensions of RNA count matrix (subset to readout genes): ", paste(dim(rna_counts_readout_only), collapse = " x "))
 
 grna_presents <- rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id
@@ -314,7 +308,7 @@ p <- ggplot(data.frame(num_cells = element_grna_counts), aes(x = num_cells)) +
        y = "Number of elements") +
   annotate("text", x = median(element_grna_counts) * 1.5, y = y_target_position,
            label = paste0("Median: ", round(median(element_grna_counts), 2)),
-           color = "red", size = 5) +
+           color = "red", linewidth = 5) +
   theme_minimal(base_size = 14)
 
 
@@ -325,7 +319,7 @@ save_ggplot(plot = p, filename = paste0(output_folder,"/sceptre_number_of_cells_
 ## Calibration check
 
 ```{r}
-sceptre_object <- run_calibration_check(sceptre_object, parallel = TRUE, n_processors = 2)
+sceptre_object <- run_calibration_check(sceptre_object, parallel = TRUE, n_processors = 8)
 plot(sceptre_object) # output suppressed for brevity
 ```
 
@@ -345,18 +339,30 @@ print(sceptre_object) # output suppressed for brevity
 ```{r}
 write_outputs_to_directory(
   sceptre_object = sceptre_object,
-  directory = paste0(output_folder,"sceptre_outputs_day",selected_day)
+  directory = paste0(output_folder,"/sceptre_outputs")
 )
 ```
 
 ```{r}
-#result <- get_result(
-#  sceptre_object = sceptre_object,
-#  analysis = "run_discovery_analysis"
-#)
+tmp_result <- get_result(
+  sceptre_object = sceptre_object,
+  analysis = "run_discovery_analysis"
+)
+write.csv(tmp_result,
+          file = paste0(output_folder,"/sceptre_outputs/sceptre_discovery_results.csv"),
+          row.names = FALSE,
+          quote = FALSE)
+tmp_result <- get_result(
+  sceptre_object = sceptre_object,
+  analysis = "run_power_check"
+)
+write.csv(tmp_result,
+          file = paste0(output_folder,"/sceptre_outputs/sceptre_power_check_results.csv"),
+          row.names = FALSE,
+          quote = FALSE)
 ```
 
 ```{r}
-saveRDS(sceptre_object, file = paste0(output_folder,"sceptre_object_day",selected_day,".rds"))
+saveRDS(sceptre_object, file = paste0(output_folder,"sceptre_object.rds"))
 ```
 
