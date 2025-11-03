@@ -45,10 +45,10 @@ negative_controls_fnp <- "results/03-2025-10-24_create_sceptre_input/sceptre_non
 gene_design_annotations = "metadata/all_genes_for_primer_design_w_tpm_legacy.tsv"
 
 # PARAMS
-selected_day = 0
-ribo_threshold = 21
-target_umi_threshold = 55
-umi_threshold = 1500
+selected_day = 4
+ribo_threshold = 6
+target_umi_threshold = 25
+umi_threshold = 1000
 
 # OUTPUTS
 output_folder <- paste0("results/04-2025-10-27_sceptre_analysis/day",selected_day)
@@ -216,8 +216,8 @@ p <- ggplot(data@meta.data, aes(x = percent.mt)) +
   facet_grid(rows = vars(day_factor)) +
   theme_minimal(base_size = 14)
 
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/mitochondrial_percent_day",selected_day,".png"))
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/mitochondrial_percent_day",selected_day,".pdf"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/mitochondrial_percent_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/mitochondrial_percent_day",selected_day,".pdf"))
 ```
 
 ### Compute percentage of ribosomal UMIs
@@ -255,8 +255,8 @@ p <- ggplot(data@meta.data, aes(x = percent.ribo)) +
   facet_grid(rows = vars(day_factor)) +
   theme_minimal(base_size = 14)
 
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/ribosomal_percent_day",selected_day,".png"))
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/ribosomal_percent_day",selected_day,".pdf"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/ribosomal_percent_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/ribosomal_percent_day",selected_day,".pdf"))
 ```
 
 ### Compute percent of UMIs in readout genes
@@ -310,8 +310,8 @@ p <- ggplot(data@meta.data, aes(x = percent_target_umis)) +
   facet_grid(rows = vars(day_factor)) +
   theme_minimal(base_size = 14)
 
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/target_genes_umis_percent_day",selected_day,".png"))
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/target_genes_umis_percent_day",selected_day,".pdf"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/target_genes_umis_percent_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/target_genes_umis_percent_day",selected_day,".pdf"))
 
 
 # Plot number of UMIs vs percent target UMIs
@@ -351,8 +351,8 @@ p<-Seurat::FeatureScatter(
     axis.text.y = ggtext::element_markdown()
   )
 
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/total_umi_vs_target_genes_umis_percent_day",selected_day,".png"))
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/total_umi_vs_target_genes_umis_percent_day",selected_day,".pdf"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/total_umi_vs_target_genes_umis_percent_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/total_umi_vs_target_genes_umis_percent_day",selected_day,".pdf"))
 
 # Are the barcodes with low ribosomal percentage the one we want to remove
 p <- Seurat::FeatureScatter(
@@ -384,8 +384,8 @@ p <- Seurat::FeatureScatter(
     axis.text.y = ggtext::element_markdown()
   )
 
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/total_umi_vs_target_genes_umis_percent_ribo_filtered_day",selected_day,".png"))
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/total_umi_vs_target_genes_umis_percent_ribo_filtered_day",selected_day,".pdf"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/total_umi_vs_target_genes_umis_percent_ribo_filtered_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/total_umi_vs_target_genes_umis_percent_ribo_filtered_day",selected_day,".pdf"))
 ```
 
 ```{r}
@@ -447,14 +447,14 @@ p <- ggplot(cpm_df, aes(x=annotation, y=mean_cpm)) +
   scale_y_log10() +
   labs(
     title = paste0("Mean CPM distribution of target genes (n=", nrow(cpm_df), ")"),
-    subtitle = paste0("Day ", selected_day, " - Filtered cells (n=", ncol(data_filtered_norm), ")"),
+    subtitle = paste0("Day ", selected_day, " - Filtered cells (n=", ncol(cpm), ")"),
     x = "",
     y = "Mean CPM (log10 scale)"
   ) +
   theme_minimal(base_size = 14)
 
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/mean_cpm_aggregated_by_gene_type_day",selected_day,".png"))
-save_ggplot(plot = p, filename = paste0(output_folder,"/plots/mean_cpm_aggregated_by_gene_type_day",selected_day,".pdf"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/mean_cpm_aggregated_by_gene_type_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/mean_cpm_aggregated_by_gene_type_day",selected_day,".pdf"))
 ```
 
 Save the mean CPM per gene
@@ -480,8 +480,8 @@ write.table(
 
 ### Save the Seurat object
 ```{r}
-SeuratObject::SaveSeuratRds(
-  data_filtered_norm,
-  file = paste0(output_folder,"/seurat_object_filtered_norm_day",selected_day,".rds")
-  )
+#SeuratObject::SaveSeuratRds(
+#  data_filtered_norm,
+#  file = paste0(output_folder,"/seurat_object_filtered_norm_day",selected_day,".rds")
+#  )
 ```
