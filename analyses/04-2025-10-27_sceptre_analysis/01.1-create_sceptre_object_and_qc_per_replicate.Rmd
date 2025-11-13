@@ -1,0 +1,686 @@
+---
+title: "01-create_sceptre_object_and_qc"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# hiPSC-EC differentiation, analyzed with SCEPTRE
+
+```{r}
+library(Seurat)
+library(sceptre)
+library(dplyr)
+library(ggplot2)
+source("scripts/R/utils.R")
+
+save_ggplot <- function(plot, filename, width = 8, height = 6, dpi = 300) {
+  ggsave(
+    filename = filename,
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = dpi
+  )
+}
+```
+
+
+## Inputs and outputs for the analysis
+
+SCEPTRE required as inputs:
+ - count files: Seurat RDS object generated during this `00-load_counts_in_Seurat_and_qc` analysis.
+ - gRNA to element map: `results/2025-09-15/guide_to_element_map_valid_overlapping_alignments.tsv`
+ - positive control pairs: `results/2025-09-15/positive_pairs_hg38_readout_genes.tsv`
+ - discovery pairs: `results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv`
+ - negative control gRNAs: `results/2025-09-15/grna_non_targeting_input.tsv`
+```{r}
+# PARAMS
+selected_day = 0
+ribo_threshold = 21
+target_umi_threshold = 55
+umi_threshold = 1500
+n_processors = 6
+
+# INPUTS
+metadata_samples_fnp <- "metadata/metadata_sample_endothelial_terra.tsv"
+metadata_genes_fnp <- "metadata/metadata_genes_final.csv"
+metadata_guides_fnp <- "metadata/guide_metadata_with_new_accessions.tsv"
+grna_to_element_map_fnp <- "results/03-2025-10-24_create_sceptre_input/guide_to_element_map_valid_overlapping_alignments.tsv"
+discovery_pairs_fnp <- "results/03-2025-10-24_create_sceptre_input/discovery_pairs_no_pos_hg38_readout_genes.tsv"
+positive_pairs_fnp <- "results/03-2025-10-24_create_sceptre_input/positive_pairs_hg38_readout_genes.tsv"
+negative_controls_fnp <- "results/03-2025-10-24_create_sceptre_input/non_targeting_grna.tsv"
+
+# OUTPUTS
+output_folder <- paste0("results/04-2025-10-27_sceptre_analysis/day",selected_day)
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+```
+
+Load all the data
+```{r}
+guide_metadata <- read.csv(metadata_guides_fnp, stringsAsFactors = FALSE, sep="\t")
+guide_metadata$aliases <- gsub("_", "-", guide_metadata$aliases)
+head(guide_metadata)
+
+grna_to_element_map <- read.delim(grna_to_element_map_fnp, header = TRUE, stringsAsFactors = FALSE)
+grna_to_element_map <- grna_to_element_map[, c("name", "element_name")]
+colnames(grna_to_element_map) <- c("grna_id", "grna_target")
+message("Number of gRNA to element mappings: ", nrow(grna_to_element_map))
+message("Number of unique elements in gRNA to element map: ", length(unique(grna_to_element_map$grna_target)))
+message("Number of unique gRNAs in gRNA to element map: ", length(unique(grna_to_element_map$grna_id)))
+
+positive_control_pairs <- read.delim(positive_pairs_fnp, header=F, stringsAsFactors = FALSE)
+colnames(positive_control_pairs) <- c("grna_target", "response_id", "gene_symbol", "gene_type", "alias")
+message("Number of positive control pairs: ", nrow(positive_control_pairs))
+positive_control_pairs <- positive_control_pairs[positive_control_pairs$grna_target %in% grna_to_element_map$grna_target, ]
+message("Number of positive control pairs after filtering to gRNA to element map: ", nrow(positive_control_pairs))
+
+discovery_pairs <- read.delim(discovery_pairs_fnp, header=F, stringsAsFactors = FALSE)
+colnames(discovery_pairs) <- c("grna_target", "response_id", "gene_symbol", "gene_type", "alias")
+message("Number of discovery pairs: ", nrow(discovery_pairs))
+discovery_pairs <- discovery_pairs[discovery_pairs$grna_target %in% grna_to_element_map$grna_target, ]
+message("Number of discovery pairs after filtering to gRNA to element map: ", nrow(discovery_pairs))
+
+non_targeting <- read.delim(negative_controls_fnp, header=T, stringsAsFactors = FALSE)
+colnames(non_targeting) <- c("grna_id", "grna_target")
+non_targeting$grna_target <- "non-targeting"
+message("Number of non-targeting gRNAs: ", nrow(non_targeting))
+
+
+# Verify that all the elements in the pairs are in the gRNA to element map
+all(positive_control_pairs$grna_target %in% grna_to_element_map$grna_target)
+all(discovery_pairs$grna_target %in%  grna_to_element_map$grna_target)
+
+
+message("Number of elements: ", length(unique(grna_to_element_map$grna_target)))
+
+gene_map <- read.csv(metadata_genes_fnp, header = TRUE, stringsAsFactors = FALSE)
+head(gene_map)
+gene_map <- unique(gene_map[, c("intended_target_gene_id", "intended_target_gene_symbol")])
+colnames(gene_map) <- c("gene_id", "gene_symbol")
+gene_map$gene_id_no_versions <- gsub("\\..*$", "", gene_map$gene_id)
+head(gene_map)
+
+discovery_pairs$response_id <- gsub("\\..*$", "", discovery_pairs$response_id)
+positive_control_pairs$response_id <- gsub("\\..*$", "", positive_control_pairs$response_id)
+
+gene_design_annotations_df = read.csv("metadata/all_genes_for_primer_design_w_tpm_legacy.tsv", sep = "\t", header = T)
+gene_design_annotations_df$gene_name_44 = gene_map$gene_symbol[match(gene_design_annotations_df$gene_base_id, gene_map$gene_id_no_versions)]
+gene_design_annotations_df <- gene_design_annotations_df[!is.na(gene_design_annotations_df$gene_name_44), ]
+rownames(gene_design_annotations_df) <- gene_design_annotations_df$gene_name_44
+
+```
+
+## Inner primer usage
+```{r}
+#inner_primer_usage_df <- read.csv("results/01-2025-10-09_inner_primers_usage/inner_primer_efficiency_ec_pct.tsv", stringsAsFactors = FALSE, sep="\t", header=TRUE)
+#head(inner_primer_usage_df)
+# Add a column with the gene symbol
+#metadata_genes_df$inner_primer_eff_pct = inner_primer_usage_df$pct_correct[match(metadata_genes_df$inner_primer, inner_primer_usage_df$Inner_Primer_Found)]
+```
+
+
+## Prepare inputs for SCEPTRE 
+
+```{r}
+# convert ids
+rbind(
+  grna_to_element_map[,c("grna_id", "grna_target")],
+  non_targeting
+) -> grna_to_element_with_non_targeting_map
+
+mask_new_alias = grepl("^GU", grna_to_element_with_non_targeting_map$grna_id)
+tmp = guide_metadata$aliases[match(grna_to_element_with_non_targeting_map$grna_id, guide_metadata$guide_id)]
+grna_to_element_with_non_targeting_map$grna_id[mask_new_alias] = tmp[mask_new_alias]
+head(grna_to_element_with_non_targeting_map)
+tail(grna_to_element_with_non_targeting_map)
+
+# Change the '_' to '-' in the gRNA IDs to match the gRNA count matrix
+grna_to_element_with_non_targeting_map$grna_id <- gsub("_", "-", grna_to_element_with_non_targeting_map$grna_id)
+
+message("Number of gRNA to element mappings (including non-targeting): ", nrow(grna_to_element_with_non_targeting_map))
+
+# Check that all gRNAs in the pairs are in the gRNA to element map
+all(positive_control_pairs$grna_target %in% grna_to_element_with_non_targeting_map$grna_target)
+all(discovery_pairs$grna_target %in% grna_to_element_with_non_targeting_map$grna_target)
+
+# Change the discovery pairs response_id column to gene_symbols
+discovery_pairs$response_id <- gene_map$gene_symbol[match(discovery_pairs$response_id, gene_map$gene_id_no_versions)]
+# Change the positive control pairs response_id column to gene_symbols
+positive_control_pairs$response_id <- gene_map$gene_symbol[match(positive_control_pairs$response_id, gene_map$gene_id_no_versions)]
+
+# Change the grna_id to be the old ones
+head(grna_to_element_with_non_targeting_map)
+```
+
+## Create Seurat object and filter
+```{r}
+metadata_samples_df <- read.delim(metadata_samples_fnp, header = TRUE, stringsAsFactors = FALSE)
+head(metadata_samples_df)
+
+h5_files_fnp <- list.files(path = "data/h5", pattern = "*.h5", full.names = TRUE, recursive = TRUE)
+
+h5_sample_names = metadata_samples_df$entity.endothelial_id[ metadata_samples_df$day == selected_day]
+
+h5_sample_names = h5_sample_names[c(1,2,7,8,13,14,19,20)]# Just for speed up testing
+
+h5_files_fnp = h5_files_fnp[basename(h5_files_fnp) %in% paste0(h5_sample_names,"_sample_filtered_feature_bc_matrix.h5")]
+
+
+# Load data
+seurat_objects_list <- mapply(
+  read_10x_rna_grna,
+  h5 = h5_files_fnp,
+  sample_name = h5_sample_names,
+  SIMPLIFY = FALSE
+)
+
+names(seurat_objects_list) <- h5_sample_names
+
+data <- merge(x = seurat_objects_list[[1]], 
+                 y = seurat_objects_list[2:length(seurat_objects_list)],
+                 merge.data = TRUE,
+                 add.cell.ids = h5_sample_names)
+Assays(data)
+data@meta.data$all = "Combined"
+
+rm(seurat_objects_list)
+gc()
+
+metadata_genes_df <- read.csv(metadata_genes_fnp, stringsAsFactors = FALSE)
+target_genes <- unique(metadata_genes_df$intended_target_gene_symbol) # Because we have multiple primers for the same gene
+message("Number of target genes: ", length(target_genes))
+
+data[["percent.mt"]] <- Seurat::PercentageFeatureSet(data, pattern = "^MT-", assay = "RNA")
+data[["percent.ribo"]] <- Seurat::PercentageFeatureSet(data, pattern = "^RPS|^RPL|^RRP|^MRP|^FAU", assay = "RNA")
+
+# Get the layer names
+layers <- grep("^counts", Layers(data[["RNA"]]), value = TRUE)
+# Iterate and compute percent of UMIs in target genes
+pct_list <- lapply(layers, function(ly) {
+  M <- SeuratObject::GetAssayData(data, assay = "RNA", layer = ly)
+  present <- intersect(target_genes, rownames(M))
+  tot <- Matrix::colSums(M)
+  tgt <- if (length(present)) Matrix::colSums(M[present, , drop = FALSE]) else rep(0, length(tot))
+  setNames(ifelse(tot > 0, 100 * tgt / tot, 0), colnames(M))
+})
+
+# Combine results
+pct_vec <- do.call(c, pct_list)
+pct_vec <- pct_vec[colnames(data)]
+
+# Add to metadata
+data$percent_target_umis <- pct_vec
+```
+
+## QC by Replicate
+
+```{r}
+# Get cell names
+cell_names <- colnames(data)
+
+# Extract parts using a regex
+meta <- as.data.frame(stringr::str_match(
+  cell_names,
+  "rep([0-9]{2})_day([0-9]{2})_chip_([a-zA-Z])_batch([0-9]{2})_channel([0-9]{2})"
+))[, -1]  # drop full match column
+
+# Assign column names
+colnames(meta) <- c("replicate", "day", "chip", "batch", "channel")
+
+# Make sure it lines up with cells
+rownames(meta) <- cell_names
+
+# Add to Seurat metadata
+data <- AddMetaData(data, metadata = meta)
+```
+
+## General QC metrics
+
+```{r}
+data.frame(
+  "pct_target_umis" = data$percent_target_umis,
+  "nCount_RNA" = data$nCount_RNA,
+  "percent.ribo" = data$percent.ribo,
+  "percent.mt" = data$percent.mt,
+  "replicate" = as.factor(data$replicate)
+) -> qc_metrics_df
+
+
+# Plot and save the distribution of QC metrics per replicate
+## Percet target UMIs 
+ggplot(qc_metrics_df, aes(x = replicate, y = pct_target_umis, fill = replicate)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5, color = "black", alpha = 0.3) +
+  scale_fill_manual(values = palette_4_qual) +
+  labs(
+    title = paste0("Day ", selected_day, " - Percent target UMIs per replicate before filtering"),
+    x = "Replicate",
+    y = "Percent target UMIs"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) -> p
+
+
+save_ggplot(plot = p, filename = paste0(output_folder,"/seurat_pct_target_umis_per_day_before_filtering.png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/seurat_pct_target_umis_per_day_before_filtering.pdf"))
+
+# Percent ribosomal UMIs
+ggplot(qc_metrics_df, aes(x = replicate, y = percent.ribo, fill = replicate)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5, color = "black", alpha = 0.3) +
+  scale_fill_manual(values = palette_4_qual) +
+  labs(
+    title = paste0("Day ", selected_day, " - Percent ribosomal UMIs per replicate before filtering"),
+    x = "Replicate",
+    y = "Percent ribosomal UMIs"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) -> p
+
+
+save_ggplot(plot = p, filename = paste0(output_folder,"/seurat_pct_ribosomal_umis_per_day_before_filtering.png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/seurat_pct_ribosomal_umis_per_day_before_filtering.pdf"))
+
+# Percent mitochondrial UMIs
+ggplot(qc_metrics_df, aes(x = replicate, y = percent.mt, fill = replicate)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5, color = "black", alpha = 0.3) +
+  scale_fill_manual(values = palette_4_qual) +
+  labs(
+    title = paste0("Day ", selected_day, " - Percent mitochondrial UMIs per replicate before filtering"),
+    x = "Replicate",
+    y = "Percent mitochondrial UMIs"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) -> p
+
+save_ggplot(plot = p, filename = paste0(output_folder,"/seurat_pct_mitochondrial_umis_per_day_before_filtering.png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/seurat_pct_mitochondrial_umis_per_day_before_filtering.pdf"))
+
+# Number of UMIs
+ggplot(qc_metrics_df, aes(x = replicate, y = nCount_RNA, fill = replicate)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5, color = "black", alpha = 0.3) +
+  scale_fill_manual(values = palette_4_qual) +
+  labs(
+    title = paste0("Day ", selected_day, " - Number of UMIs per replicate before filtering"),
+    x = "Replicate",
+    y = "Number of UMIs"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) -> p
+
+save_ggplot(plot = p, filename = paste0(output_folder,"/seurat_nCount_RNA_per_day_before_filtering.png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/seurat_nCount_RNA_per_day_before_filtering.pdf"))
+
+```
+
+## Filter
+
+```{r}
+message("Filtering cells with percent_target_umis >= ", target_umi_threshold, 
+        ", nCount_RNA >= ", umi_threshold,
+        " and percent.ribo >= ", ribo_threshold, "\n")
+data_filtered = subset(data, subset = percent_target_umis >= target_umi_threshold & nCount_RNA >= umi_threshold & percent.ribo >= ribo_threshold)
+data_filtered
+message("Number of cells before filtering: ", ncol(data), "\n")
+message("Number of cells filtered out: ", ncol(data) - ncol(data_filtered), "\n")
+message("Number of cells after filtering: ", ncol(data_filtered), "\n")
+```
+
+## Number of average UMIs per gene per cell per replicate
+
+```{r}
+merged_layer <- JoinLayers(data_filtered[["RNA"]], new.layer.name = "merged", layers = "counts")
+
+tmp <- GetAssayData(merged_layer, assay = "RNA", layer = "counts")
+
+mean_per_gene = Matrix::rowSums(tmp[target_genes,]) / ncol(tmp)
+
+df_plot <- data.frame(
+  cpm_reference = gene_design_annotations_df[target_genes, "d0_ipsc"],
+  mean_umis_per_gene = mean_per_gene[target_genes],
+  gene_type = gene_design_annotations_df[target_genes, "type"]
+  #primer_efficiency = metadata_genes_df$inner_primer_eff_pct[match(target_genes, metadata_genes_df$intended_target_gene_symbol)]
+)
+
+#df_plot$primer_eff_factor = cut(
+#  df_plot$primer_efficiency,
+#  breaks = c(-Inf, 50, 70, 90, Inf),
+#  labels = c("<50%", "50-70%", "70-90%", "90-100%"))
+ggplot(df_plot, aes(x = cpm_reference, y = mean_umis_per_gene)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 30, linetype = "dashed", color = "blue") +
+  labs(
+    title = paste0("Day ", selected_day,
+                   " - Correlation of mean UMIs per gene per cell vs CPM"),
+    x = "CPM in reference dataset",
+    y = "Mean UMIs per gene per cell"
+  ) +
+  coord_trans(x = "log10", y="log10") +
+  #facet_wrap(. ~ gene_type, ncol=3, scales="free_y") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+table(df_plot$mean_umis_per_gene >= 1, df_plot$gene_type)
+
+```
+
+```{r}
+# Thresholds
+x_thresh <- 30
+y_thresh <- 1
+
+# Compute quadrants and counts
+quad_counts <- df_plot %>%
+  mutate(
+    quadrant = case_when(
+      cpm_reference >= x_thresh & mean_umis_per_gene >= y_thresh ~ "Q1",
+      cpm_reference <  x_thresh & mean_umis_per_gene >= y_thresh ~ "Q2",
+      cpm_reference <  x_thresh & mean_umis_per_gene <  y_thresh ~ "Q3",
+      cpm_reference >= x_thresh & mean_umis_per_gene <  y_thresh ~ "Q4"
+    )
+  ) %>%
+  count(quadrant)
+
+# Compute dynamic label positions
+x_min <- min(df_plot$cpm_reference, na.rm = TRUE)
+x_max <- max(df_plot$cpm_reference, na.rm = TRUE)
+y_min <- min(df_plot$mean_umis_per_gene, na.rm = TRUE)
+y_max <- max(df_plot$mean_umis_per_gene, na.rm = TRUE)
+
+label_df <- tibble(
+  quadrant = c("Q1", "Q2", "Q3", "Q4"),
+  x = c(
+    10^(log10(x_thresh) + (log10(x_max) - log10(x_thresh)) * 0.9 ), # halfway between 30 and max
+    10^(log10(x_min) + (log10(x_thresh) - log10(x_min)) * 0.1),    # halfway between min and 30
+    10^(log10(x_min) + (log10(x_thresh) - log10(x_min)) * 0.1),
+    10^(log10(x_thresh) + (log10(x_max) - log10(x_thresh)) * 0.9)
+  ),
+  y = c(
+    10^(log10(y_thresh) + (log10(y_max) - log10(y_thresh)) * 0.9),
+    10^(log10(y_thresh) + (log10(y_max) - log10(y_thresh)) * 0.9),
+    10^(log10(y_min) + (log10(y_thresh) - log10(y_min)) / 2),
+    10^(log10(y_min) + (log10(y_thresh) - log10(y_min)) / 2)
+  )
+) %>%
+  left_join(quad_counts, by = "quadrant") %>%
+  mutate(label = paste0(quadrant, ": ", n))
+
+# Plot
+p <- ggplot(df_plot, aes(x = cpm_reference, y = mean_umis_per_gene)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 30, linetype = "dashed", color = "blue") +
+  geom_text(
+    data = label_df,
+    aes(x = x, y = y, label = label),
+    hjust = 0, vjust = 0, size = 4, fontface = "bold"
+  ) +
+  coord_trans(x = "log10", y = "log10") +
+  labs(
+    title = paste0("Day ", selected_day,
+                   " - Correlation of mean UMIs per gene per cell vs CPM"),
+    x = "CPM in reference dataset",
+    y = "Mean UMIs per gene per cell"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+save_ggplot(plot = p, filename = paste0(output_folder,"/mean_umis_per_gene_vs_cpm_with_quadrants_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/mean_umis_per_gene_vs_cpm_with_quadrants_day",selected_day,".pdf"))
+```
+
+
+## Clean up before loading
+```{r}
+rm(data)
+rm(merged_layer)
+gc()
+```
+
+
+## Extract matrices for SCEPTRE
+```{r}
+
+merged_layer <- JoinLayers(data_filtered[["RNA"]], new.layer.name = "merged", layers = "counts")
+rna_counts <- GetAssayData(merged_layer, assay = "RNA", layer = "counts")
+grna_counts <- GetAssayData(data_filtered, assay = "gRNA")
+message("Dimensions of RNA count matrix: ", paste(dim(rna_counts), collapse = " x "))
+message("Dimensions of gRNA count matrix: ", paste(dim(grna_counts), collapse = " x "))
+
+# Check that the cell barcodes match between the RNA and gRNA count matrices
+all(colnames(rna_counts) == colnames(grna_counts))
+# Check that the gRNAs in the gRNA count matrix are in the gRNA to element map
+#all(rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id)
+table(rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id)
+
+
+# Subset the RNA count matrix to only the readout genes
+present <- unique(c(positive_control_pairs$response_id, discovery_pairs$response_id))
+present <- present[present %in% gene_map$gene_id_no_versions]
+length(present)
+
+rna_counts_readout_only <- rna_counts[gene_map$gene_symbol[match(present, gene_map$gene_id_no_versions)], , drop = FALSE]
+#rna_counts_readout_only <- rna_counts[present, , drop = FALSE]
+message("Dimensions of RNA count matrix (subset to readout genes): ", paste(dim(rna_counts_readout_only), collapse = " x "))
+
+grna_presents <- rownames(grna_counts) %in% grna_to_element_with_non_targeting_map$grna_id
+
+grna_counts <- grna_counts[grna_presents, , drop = FALSE]
+message("Dimensions of gRNA count matrix (subset to gRNAs in map): ", paste(dim(grna_counts), collapse = " x "))
+```
+
+## Create the SCEPTRE object
+
+```{r}
+# Create the initial SCEPTRE object
+sceptre_object = sceptre::import_data(
+  response_matrix = rna_counts_readout_only,
+  grna_matrix = grna_counts,
+  grna_target_data_frame = grna_to_element_with_non_targeting_map,
+  moi = "high",
+)
+print(sceptre_object)
+
+# Use gene_symbol for the response_id
+discovery_pairs$gene_id = discovery_pairs$response_id
+discovery_pairs$response_id = discovery_pairs$gene_symbol
+positive_control_pairs$gene_id = positive_control_pairs$response_id
+positive_control_pairs$response_id = positive_control_pairs$gene_symbol
+# Make sure the genes are present in the pairs
+all(unique(c(discovery_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
+all(unique(c(positive_control_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
+
+
+# Set the analysis parameters
+sceptre_object <- set_analysis_parameters(
+  sceptre_object = sceptre_object,
+  discovery_pairs = discovery_pairs,
+  positive_control_pairs = positive_control_pairs,
+  side = "both"
+)
+print(sceptre_object)
+```
+
+
+```{r}
+#plot_grna_count_distributions(sceptre_object)
+# Assign gRNAs to cells using `thresholding` method and 10 UMIs threshold
+sceptre_object <- assign_grnas(
+  sceptre_object = sceptre_object,
+  parallel = TRUE,
+  method = "thresholding",
+  threshold = 10,
+  n_processors = n_processors
+)
+
+plot(sceptre_object)
+```
+
+## Quality control
+
+```{r}
+sceptre_object <- run_qc(sceptre_object)
+plot(sceptre_object)
+
+# compute the number of cells per element
+element_grna_counts <- sapply(sceptre_object@grna_assignments$grna_group_idxs, function(idxs) {
+  length(idxs)
+})
+
+# Plot the distribution of number of gRNAs per element
+histogram_data <- hist(element_grna_counts, breaks = 30, plot = FALSE)
+
+# 2. Find the overall maximum count (the tallest bar)
+max_bar_height <- max(histogram_data$counts)
+
+# 3. Calculate the target Y position (50% of the max height)
+y_target_position <- max_bar_height
+
+p <- ggplot(data.frame(num_cells = element_grna_counts), aes(x = num_cells)) +
+  geom_histogram(bins = 50, fill = "lightblue", color = "black") +
+  geom_vline(xintercept = median(element_grna_counts), color = "red", linetype = "dashed", linewidth = 1) +
+  labs(title = "Distribution of number of cells per element",
+       subtitle = paste0("Day ", selected_day, " - Number of elements (n=", length(element_grna_counts), ")"),
+       x = "Number of cells per element",
+       y = "Number of elements") +
+  annotate("text", x = median(element_grna_counts) * 1.5, y = y_target_position,
+           label = paste0("Median: ", round(median(element_grna_counts), 2)),
+           color = "red", size = 5) +
+  theme_minimal(base_size = 14)
+
+save_ggplot(plot = p, filename = paste0(output_folder,"/sceptre_number_of_cells_per_element_day",selected_day,".png"))
+save_ggplot(plot = p, filename = paste0(output_folder,"/sceptre_number_of_cells_per_element_day",selected_day,".pdf"))
+```
+
+## Calibration check
+
+```{r}
+sceptre_object <- run_calibration_check(sceptre_object, parallel = TRUE, n_processors = n_processors)
+print(sceptre_object)
+```
+
+## Power Check
+```{r}
+sceptre_object <- run_power_check(sceptre_object, parallel = TRUE, n_processors = n_processors)
+print(sceptre_object)
+```
+
+## Run the discovery analysis
+```{r}
+sceptre_object <- run_discovery_analysis(sceptre_object, parallel = TRUE, n_processors = n_processors)
+print(sceptre_object)
+```
+
+## Write outputs
+```{r}
+write_outputs_to_directory(
+  sceptre_object = sceptre_object,
+  directory = paste0(output_folder,"/sceptre_outputs")
+)
+```
+
+```{r}
+tmp_result <- get_result(
+  sceptre_object = sceptre_object,
+  analysis = "run_discovery_analysis"
+)
+write.csv(tmp_result,
+          file = paste0(output_folder,"/sceptre_outputs/sceptre_discovery_results.csv"),
+          row.names = FALSE,
+          quote = FALSE)
+tmp_result <- get_result(
+  sceptre_object = sceptre_object,
+  analysis = "run_power_check"
+)
+write.csv(tmp_result,
+          file = paste0(output_folder,"/sceptre_outputs/sceptre_power_check_results.csv"),
+          row.names = FALSE,
+          quote = FALSE)
+```
+
+```{r}
+saveRDS(sceptre_object, file = paste0(output_folder,"/sceptre_outputs/sceptre_object.rds"))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+res_df <- data.frame()
+
+tmp_sub_data = subset(x = data_filtered[target_genes,], replicate == "01")
+tmp = Matrix::rowSums(tmp_sub_data@assays$RNA)
+res_df = res_df %>%
+  rbind(data.frame(
+    gene_symbol = names(tmp),
+    replicate = "01",
+    mean_umis_per_gene_per_cell = tmp / ncol(tmp_sub_data)
+  ))
+
+tmp_sub_data = subset(x = data_filtered[target_genes,], replicate == "02")
+tmp = Matrix::rowSums(tmp_sub_data@assays$RNA)
+res_df = res_df %>%
+  rbind(data.frame(
+    gene_symbol = names(tmp),
+    replicate = "02",
+    mean_umis_per_gene_per_cell = tmp / ncol(tmp_sub_data)
+  ))
+
+tmp_sub_data = subset(x = data_filtered[target_genes,], replicate == "03")
+tmp = Matrix::rowSums(tmp_sub_data@assays$RNA)
+res_df = res_df %>%
+  rbind(data.frame(
+    gene_symbol = names(tmp),
+    replicate = "03",
+    mean_umis_per_gene_per_cell = tmp / ncol(tmp_sub_data)
+  ))
+
+tmp_sub_data = subset(x = data_filtered[target_genes,], replicate == "04")
+tmp = Matrix::rowSums(tmp_sub_data@assays$RNA)
+res_df = res_df %>%
+  rbind(data.frame(
+    gene_symbol = names(tmp),
+    replicate = "04",
+    mean_umis_per_gene_per_cell = tmp / ncol(tmp_sub_data)
+  ))
+
+ggplot(res_df, aes(x = replicate, y = mean_umis_per_gene_per_cell, fill = replicate)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5, color = "black", alpha = 0.3) +
+  scale_fill_manual(values = palette_4_qual) +
+  labs(
+    title = paste0("Day ", selected_day, " - Number of UMIs per gene per cell per replicate after filtering"),
+    x = "Replicate",
+    y = "Mean UMIs per gene per cell"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  ) + geom_hline(yintercept = 1)
+
+table(res_df$mean_umis_per_gene_per_cell >= 1, res_df$replicate)
+res_df[res_df$mean_umis_per_gene_per_cell >= 1, ] %>%
+  group_by(gene_symbol) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n)) -> tmp_df
+```
+
+```{r eval=FALSE, include=FALSE}
+
+```
+
