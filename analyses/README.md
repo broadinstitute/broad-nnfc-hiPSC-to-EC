@@ -4,77 +4,20 @@ WARNING: The metadata and scripts folder are a work in progress and may not be c
 - [hiPSC → HPC differentiation large screen](#hipsc--hpc-differentiation-large-screen)
 - [hiPSC → EC differentiation large screen](#hipsc--ec-differentiation-large-screen)
 
+# Analyses
+
+## 10X Multiome 5 Timepoints CMO data
+### Description
+[analyses/2026-01-19_10x_multiome/README.md](analyses/2026-01-19_10x_multiome/README.md)
+### Key Results
+CMO for channel1: `gs://fc-76565551-28c3-4b6d-a048-e272103bcbd1/data/10x_multiome_5_timepoints/cmo_channel1.annotated.h5ad`
+CMO for channel2: `gs://fc-76565551-28c3-4b6d-a048-e272103bcbd1/data/10x_multiome_5_timepoints/cmo_channel2.annotated.h5ad`
+
+
 ## hiPSC → HPC differentiation large screen
 
 ### Code
 
-- [2025-09-02](./2025-09-02/): DEPRECATED: Preliminary analysis with inaccurate pairs. ~~First look at the D0 iPSC -> HPC large screen.~~
-- [2025-09-15](./2025-09-15/): Create discovery and positive pairs
-- [2025-09-18](./2025-09-18/): Load data for D0 hiPSC -> HPC and preprocess
-- [2025-09-18_gene_annotations](./2025-09-18_gene_annotations/): WARNING: This is an alpha version. Given a list of genes, get their annotations (biotype, entrez id, etc) using my_gene python library.
-- [2025-09-19](./2025-09-19/): SCEPTRE analysis for D0 hiPSC -> HPC
-
-### Results
-
-- **[positive_pairs_hg38_readout_genes.tsv](../../results/2025-09-15/positive_pairs_hg38_readout_genes.tsv)**  
-  TSV file containing positive element-gene pairs.  
-  **Columns:**  
-  - `element_name`: Name of the element  
-  - `ensembl_id`: Ensembl ID of the TSS being targeted
-
-- **[discovery_pairs_no_pos_hg38_readout_genes.tsv](../../results/2025-09-15/discovery_pairs_no_pos_hg38_readout_genes.tsv)**  
-  TSV file with discovery pairs (excluding positive pairs and TSS overlaps).  
-  **Columns:**  
-  - `element_name`: Name of the element  
-  - `ensembl_id`: Ensembl ID to test for interaction
-
-- **[grna_non_targeting_input.tsv](../../results/2025-09-15/grna_non_targeting_input.tsv)**  
-  TSV file listing non-targeting gRNAs used in the experiment.  
-  **Columns:**  
-  - `grna_id`: gRNA identifier  
-  - `label`: "non-targeting" (fixed value)
-
-- **[d0_seurat_object_filtered_norm.rds](../../results/2025-09-18/d0_seurat_object_filtered_norm.rds)**  
-  RDS file containing a Seurat object with filtered and normalized data for D0 hiPSC.
-
-  **Layers:**
-  - `counts.<sample_name>`: Raw counts matrix (genes x cells) per sample
-  - `data.<sample_name>`: Normalized data (CPM) matrix (genes x cells) per sample
-
-- **[mean_cpm_per_gene_filtered_cells.tsv](../../results/2025-09-18/mean_cpm_per_gene_filtered_cells.tsv)**  
-  TSV file with mean CPM per gene across all filtered cells (lenient filtering).  
-  **Columns:**  
-  - `gene_symbol`: Gene symbol  
-  - `ensembl_id`: Ensembl gene ID  
-  - `mean_cpm`: Mean CPM value across all filtered cells  
-  - `is_readout_gene`: Indicates if the gene is a readout gene (TRUE/FALSE)
-
-- **[high_cpm_non_readout_genes.tsv](../../results/2025-09-18/high_cpm_non_readout_genes.tsv)**  
-  TSV file listing non-readout genes with high expression (mean CPM > 100).  
-  **Columns:**  
-  - `gene_symbol`: Gene symbol  
-  - `ensembl_id`: Ensembl gene ID  
-  - `mean_cpm`: Mean CPM value
-
-- **[gene_annotations.csv](../../results/2025-09-18_gene_annotations/gene_annotations.csv)**  
-  CSV file with annotations for the high CPM non-readout genes. 
-  **Columns:**  
-  - `gene_symbol`: Gene symbol  
-  - `name`: This is the full gene name
-  - `summary`: Description of the function
-
-- **[keyword_category_counts.tsv](../../results/2025-09-18_gene_annotations/keyword_category_counts.tsv)**
-  TSV file with counts of keywords in gene annotations.  
-  **Columns:**  
-  - `category_keyword`: Keyword found in gene annotations  
-  - `n_genes`: Number of genes associated with the keyword
-
-- **[keyword_category_gene_list.tsv](../../results/2025-09-18_gene_annotations/keyword_category_gene_list.tsv)**
-  TSV file listing genes associated with each keyword category.  
-  **Columns:**  
-  - `category_keyword`: Keyword found in gene annotations  
-  - `gene_symbol`: Gene symbol associated with the keyword
-  - `annotation`: Annotation text associated with the keyword
   
 ## hiPSC → EC differentiation large screen
 
