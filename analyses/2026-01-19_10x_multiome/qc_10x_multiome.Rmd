@@ -3,3 +3,16 @@ title: "qc_10x_multiome"
 output: html_document
 ---
 
+```{r}
+library(Seurat)
+```
+
+```{r}
+channel1 = "../../data/external/10x_multiome_5_timepoints/10x_5timepoints_channel1.h5ad"
+channel2 = "../../data/external/10x_multiome_5_timepoints/10x_5timepoints_channel2.h5ad"
+```
+
+```{r}
+ch1_so = Seurat::Read10X_h5(channel1)
+```
+
