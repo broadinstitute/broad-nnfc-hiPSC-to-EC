@@ -1,10 +1,9 @@
 WARNING: The metadata and scripts folder are a work in progress and may not be complete or fully accurate.
 
-# Index
-- [hiPSC → HPC differentiation large screen](#hipsc--hpc-differentiation-large-screen)
-- [hiPSC → EC differentiation large screen](#hipsc--ec-differentiation-large-screen)
-
 # Analyses
+
+- [analyses/00-2026-01-20_load_counts_and_qc](analyses/00-2026-01-20_load_counts_and_qc/README.md)
+
 
 ## 10X Multiome 5 Timepoints CMO data
 ### Description
@@ -14,11 +13,6 @@ CMO for channel1: `gs://fc-76565551-28c3-4b6d-a048-e272103bcbd1/data/10x_multiom
 CMO for channel2: `gs://fc-76565551-28c3-4b6d-a048-e272103bcbd1/data/10x_multiome_5_timepoints/cmo_channel2.annotated.h5ad`
 
 
-## hiPSC → HPC differentiation large screen
-
-### Code
-
-  
 ## hiPSC → EC differentiation large screen
 
 ### Code

@@ -1,0 +1,552 @@
+---
+title: "DC-TAP Endothelial differentiation analysis - cDNA"
+author: "Eugenio Mattei"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: flatly
+    highlight: tango
+params:
+  selected_day: 0
+  ribo_threshold: 20
+  target_umi_threshold: 55
+  umi_threshold: 1500
+---
+
+```{r}
+library(here)
+
+# Path to this Rmd while knitting
+this_rmd <- knitr::current_input()
+
+# Analysis folder name
+analysis_dirname <- "2026-01-20_load_counts_and_qc"
+
+# Parameterized results folder
+output_folder <- here(
+  "results",
+  analysis_dirname,
+  paste0(
+    "day", params$selected_day,
+    "_ribo", params$ribo_threshold,
+    "_tumi", params$target_umi_threshold,
+    "_umi", params$umi_threshold
+  )
+)
+
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+output_folder
+```
+
+# hiPSC -> EC
+
+```{r}
+library(hdf5r)
+library(dplyr)
+library(sceptre)
+library(Seurat)
+library(ggplot2)
+library(ggtext)
+library(ggExtra)
+options(scipen=999) # to avoid scientific notation
+
+
+selected_day          <- params$selected_day
+ribo_threshold        <- params$ribo_threshold
+target_umi_threshold  <- params$target_umi_threshold
+umi_threshold         <- params$umi_threshold
+
+# Custom functions
+source(here("scripts", "R", "utils.R"))
+```
+
+## Parameters and file paths
+
+```{r}
+# INPUTS
+metadata_samples_fnp <- here("metadata", "metadata_sample_full.tsv")
+metadata_genes_fnp   <- here("metadata", "metadata_genes_final.csv")
+
+# scRNA mean UMI counts
+scrna_5prime <- here("data", "external", "WTC11_10x_5prime", "D0_10x5prime_pilot_counts_summary_ribo15_mt15_umi2000.tsv")
+```
+
+## Load the metadata
+
+```{r}
+metadata_samples_df <- read.csv(metadata_samples_fnp, sep = "\t")
+
+metadata_genes_df <- read.csv(metadata_genes_fnp)
+head(metadata_genes_df,5)
+
+target_genes <- metadata_genes_df$intended_target_gene_symbol
+target_genes <- unique(target_genes) # Because we have multiple primers for the same gene
+
+h5_files_fnp <- list.files(path = here("data","h5"), pattern = "*.h5", full.names = TRUE, recursive = TRUE)
+
+h5_sample_names <- sub(".*/(.*)_sample_filtered_feature_bc_matrix\\.h5$", "\\1", h5_files_fnp)
+
+head(h5_sample_names)
+```
+
+## Create the gene symbol to ensembl ID mapping
+```{r}
+# Load the same h5 twice, one time using gene symbols and one time using Ensembl IDs
+temp_seurat <- Seurat::Read10X_h5(h5_files_fnp[1], use.names = TRUE)   # rownames = gene symbol
+gene_symbol_from_h5 <-  rownames(temp_seurat[[1]])
+head(gene_symbol_from_h5)
+
+temp_seurat <- Seurat::Read10X_h5(h5_files_fnp[1], use.names = FALSE)  # rownames = Ensembl IDs
+ensembl_id_from_h5 <- rownames(temp_seurat[[1]])
+head(ensembl_id_from_h5)
+
+# Create a mapping data.frame
+gene_map <- data.frame(
+  symbol = gene_symbol_from_h5,
+  ensembl = ensembl_id_from_h5,
+  stringsAsFactors = FALSE
+)
+head(gene_map)
+rm(temp_seurat, gene_symbol_from_h5, ensembl_id_from_h5)
+```
+
+## Read the count matrices in Seurat
+```{r}
+# Keep only the selected day
+h5_sample_names <- metadata_samples_df$entity.endothelial_id[metadata_samples_df$day == selected_day]
+#h5_sample_names <- head(h5_sample_names, n=5)
+
+# Match h5 files to samples
+target_files <- setNames(
+  paste0(h5_sample_names, "_sample_filtered_feature_bc_matrix.h5"),
+  h5_sample_names
+)
+
+# Check all the files exist
+h5_files_fnp2 <- h5_files_fnp[match(target_files, basename(h5_files_fnp))]
+names(h5_files_fnp2) <- h5_sample_names
+stopifnot(!anyNA(h5_files_fnp2))
+
+# Load them into Seurat
+seurat_objects_list <- Map(
+  f = read_10x_rna_grna,
+  h5 = h5_files_fnp2,
+  sample_name = names(h5_files_fnp2),
+  load_gRNA = FALSE
+)
+
+# Merge (handle 1 sample)
+if (length(seurat_objects_list) == 1) {
+  data <- seurat_objects_list[[1]]
+} else {
+  data <- merge(
+    x = seurat_objects_list[[1]],
+    y = seurat_objects_list[2:length(seurat_objects_list)],
+    merge.data = TRUE
+  )
+sapply(seurat_objects_list, Seurat::Project)
+}
+
+data[["all"]] <- "Combined"
+data
+```
+
+# Add metadata
+```{r}
+# Merge the samples metadata into Seurat
+ids <- Cells(data)
+sample_id <- sub("_sample_.*$", "", basename(ids))
+
+
+meta <- metadata_samples_df
+meta$sample_id <- meta$entity.endothelial_id
+meta <- meta[!duplicated(meta$sample_id), , drop = FALSE]
+
+idx <- match(sample_id, meta$sample_id)
+
+meta_for_seurat <- meta[idx, , drop = FALSE]
+meta_for_seurat$sample_id <- NULL
+rownames(meta_for_seurat) <- ids
+
+
+data <- AddMetaData(data, metadata = meta_for_seurat)
+```
+
+
+```{r}
+# clean up
+rm(seurat_objects_list)
+gc()
+```
+
+## QC the RNAseq
+
+### Check how many target genes are present in the dataset
+```{r}
+n_readout_genes_in_matrix <- length(intersect(rownames(data), target_genes))
+message("All genes present in the dataset: ", n_readout_genes_in_matrix, "\n")
+```
+
+### Update metadata
+```{r}
+data$replicate_factor = factor(
+    meta_for_seurat$replicate, 
+    
+    # The actual values in the data (the numeric levels)
+    levels = 1:4, 
+    
+    # The new labels to assign to those levels (the string names)
+    labels = c("Rep 1", "Rep 2", "Rep 3", "Rep 4")
+)
+
+data$day_factor = factor(
+    meta_for_seurat$day, 
+    
+    # The actual values in the data (the numeric levels)
+    levels = c(0,2,4), 
+    
+    # The new labels to assign to those levels (the string names)
+    labels = c("Day 0", "Day 2", "Day 4")
+)
+```
+
+
+### Compute percentage or mitochondrial UMIs
+```{r}
+data[["percent.mt"]] <- Seurat::PercentageFeatureSet(data, pattern = "^MT-", assay = "RNA")
+
+p <- plot_hist_with_group_medians(
+  df = data@meta.data,
+  value_col = "percent.mt",
+  group_col = "day_factor",
+  title = "Mitochondrial Percentage Distribution",
+  xlab = "UMIs from Mitochondrial genes(%)"
+)
+print(p)
+save_both(p, output_folder, paste0("mitochondrial_percent_day", selected_day))
+```
+
+### Compute percentage of ribosomal UMIs
+```{r}
+data[["percent.ribo"]] <- Seurat::PercentageFeatureSet(
+  data, pattern = "^RPS|^RPL|^RRP|^MRP|^FAU", assay = "RNA"
+)
+
+p <- plot_hist_with_group_medians(
+  df = data@meta.data,
+  value_col = "percent.ribo",
+  group_col = "day_factor",
+  title = "Ribosomal Percentage Distribution",
+  xlab = "UMIs from Ribosomal genes(%)"
+)
+print(p)
+save_both(p, output_folder, paste0("ribosomal_percent_day", selected_day))
+```
+
+### Compute percent of UMIs in readout genes
+```{r}
+data$percent_target_umis <- compute_percent_target_umis(data, target_genes)
+
+p <- plot_hist_with_group_medians(
+  df = data@meta.data,
+  value_col = "percent_target_umis",
+  group_col = "day_factor",
+  title = "Target Genes Percentage Distribution",
+  xlab = "UMIs from targeted genes(%)"
+)
+print(p)
+save_both(p, output_folder, paste0("target_genes_umis_percent_day", selected_day))
+```
+
+### Plot Total UMI vs Percents target UMIs
+
+```{r}
+df <- data@meta.data
+
+p <- plot_scatter_thresholds(
+  df = df,
+  y = "percent_target_umis",
+  title = "Total UMIs vs UMIs in readout genes",
+  subtitle = paste("n =", nrow(df),";"),
+  x_thresh = umi_threshold,
+  y_thresh = target_umi_threshold
+)
+print(p)
+save_both(p, output_folder, paste0("total_umi_vs_target_genes_umis_percent_day", selected_day))
+```
+
+### Plot Total UMI vs Percents target UMIs after filtering for ribosomes
+
+```{r}
+df_ribo <- subset(df, percent.ribo < ribo_threshold)
+
+p <- plot_scatter_thresholds(
+  df = df_ribo,
+  y = "percent_target_umis",
+  title = "Total UMIs vs UMIs in readout genes",
+  subtitle = paste0("Ribosomal percentage < ",ribo_threshold,"; n = ", nrow(df_ribo),";"),
+  x_thresh = umi_threshold,
+  y_thresh = target_umi_threshold
+)
+print(p)
+save_both(p, output_folder, paste0("total_umi_vs_target_genes_umis_percent_ribo_filtered_day", selected_day))
+```
+
+## Filter cells
+
+```{r}
+message("Keeping cells with percent_target_umis >= ", target_umi_threshold, 
+        ", nCount_RNA >= ", umi_threshold,
+        " and percent.ribo >= ", ribo_threshold, "\n")
+data_filtered = subset(data, 
+                       subset = percent_target_umis >= target_umi_threshold & nCount_RNA >= umi_threshold & percent.ribo >= ribo_threshold
+                       )
+data_filtered
+message("Number of cells before filtering: ", ncol(data), "\n")
+message("Number of cells filtered out: ", ncol(data) - ncol(data_filtered), "\n")
+message("Number of cells after filtering: ", ncol(data_filtered), "\n")
+```
+
+```{r}
+rm(data)
+gc()
+```
+
+
+## Aggregate statistics
+
+```{r}
+# Get general statistics of barcodes per channel, replicate
+table(data_filtered$chip, data_filtered$batch)
+table(data_filtered$chip, data_filtered$channel)
+table(data_filtered$replicate, data_filtered$batch)
+```
+
+## Normalize the data for QC
+
+```{r}
+data_norm = NormalizeData(data_filtered, normalization.method = "RC", scale.factor = 1e6)
+# SeuratObject::JoinLayers takes too much memory to join layers
+# 1. Get the names of all the layers with normalized counts
+data_norm_layers <- grep("^data(\\.|$)", Layers(data_norm), value = TRUE)
+stopifnot(length(data_norm) > 0)
+# 2. Extract all the matrices and put them in a list
+data_norm_mats <- lapply(
+  data_norm_layers,
+  function(ly) SeuratObject::GetAssayData(data_norm, assay="RNA", layer = ly)
+  )
+
+# Free memory
+rm(data_norm)
+gc()
+
+# 3. Combine them together
+counts_norm_mat <- do.call(cbind, data_norm_mats)   # genes x cells, CPM units;
+
+# Free memory
+rm(data_norm_mats)
+gc()
+```
+
+## Targeted vs non-targeted genes comparison
+
+```{r}
+mask_target_gene = rownames(counts_norm_mat) %in% metadata_genes_df$intended_target_gene_symbol
+
+plot_df = data.frame(
+  "gene_symbol" = rownames(counts_norm_mat),
+  "mean_upm" = Matrix::rowMeans(counts_norm_mat),
+  "is_target_gene" = factor(mask_target_gene, levels=c(TRUE, FALSE) ,labels=c("targeted", "non-targeted"))
+)
+
+p <- ggplot(plot_df, aes(x = is_target_gene, y = mean_upm + 1)) +
+  geom_boxplot(outlier.size = 0.5) +
+  scale_y_log10() +
+  ylab("Mean UPM (log10 scale)") +
+  xlab("") +
+  ggtitle("Mean UPM of targeted genes vs non-targeted genes") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme_minimal()
+print(p)
+save_both(p, output_folder, paste0("targeted_vs_nontargeted_upm_boxplot", selected_day))
+```
+
+
+## Differentiation markers
+
+```{r}
+plot_df_markers <- plot_df[mask_target_gene,] %>% 
+  left_join(
+    metadata_genes_df,
+    by=c("gene_symbol" = "intended_target_gene_symbol")
+    ) %>%
+  mutate(
+    across(
+      c(is_d0_marker, is_d2_marker, is_d4_marker, is_housekeeping_gene),
+      ~ as.logical(.x)
+    )
+  )%>%
+  mutate(
+    gene_class = case_when(
+      is_d0_marker ~ "d0_marker",
+      is_d2_marker ~ "d2_marker",
+      is_d4_marker ~ "d4_marker",
+      is_housekeeping_gene ~ "housekeeping"
+    )
+  ) %>%
+  mutate(
+    gene_class = factor(
+      gene_class,
+      levels = c("d0_marker", "d2_marker", "d4_marker", "housekeeping"),
+      labels = c("Day 0 marker", "Day2", "Day 4", "Housekeeping")
+    )
+  )%>%
+  filter(!is.na(gene_class))
+
+p <- ggplot(plot_df_markers, aes(x = gene_class, y = mean_upm)) +
+  geom_jitter(width = 0.25, alpha = 0.7, size = 1.5) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.5, color = "red") +
+  scale_y_log10() +
+  labs(
+    x = "Gene class",
+    y = "Mean UPM (log10 scale)",
+    title = "Mean UPM per marker / housekeeping gene"
+  ) +
+  theme_bw()
+print(p)
+save_both(p, output_folder, paste0("gene_markers_upm_jitter", selected_day))
+```
+
+```{r}
+rm(counts_norm_mat, data_norm_mats, data_norm)
+gc()
+```
+
+
+### Average number of UMIs per gene per cell
+
+```{r}
+# SeuratObject::JoinLayers takes too much memory to join layers
+# 1. Get the names of all the layers with normalized counts
+umi_layers <- grep("^counts(\\.|$)", Layers(data_filtered), value = TRUE)
+stopifnot(length(data_filtered) > 0)
+# 2. Extract all the matrices and put them in a list
+counts_umi_mats <- lapply(
+  umi_layers,
+  function(ly) SeuratObject::GetAssayData(data_filtered, assay="RNA", layer = ly)
+  )
+# 3. Combine them together
+counts_umi_mat <- do.call(cbind, counts_umi_mats)   # genes x cells, UMI units;
+
+# Free memory
+rm(counts_umi_mats)
+gc()
+
+mask_target_gene = rownames(counts_umi_mat) %in% metadata_genes_df$intended_target_gene_symbol
+
+mean_umi_df <- data.frame(
+  "gene_symbol" = rownames(counts_umi_mat),
+  "ensembl_id" = gene_map$ensembl[match(rownames(counts_umi_mat), gene_map$symbol)],
+  "mean_umi" = Matrix::rowMeans(counts_umi_mat)
+)
+
+# Read the reference scRNA data
+#"gene_symbol", "ensembl_id", "total_umi", "mean_umi", "mean_upm"  
+reference_umi = read.table(file = scrna_5prime, header = TRUE)
+
+umi_comparison_df = mean_umi_df[mask_target_gene,] %>%
+  left_join(
+    reference_umi,
+    by=c("ensembl_id"= "ensembl_id")
+    )
+
+# Thresholds
+x_thresh <- 30
+y_thresh <- 1
+
+umi_comparison_df[umi_comparison_df$mean_upm==0,] = 0.01 # to avoid log10(0) issues
+# Compute quadrants and counts
+quad_counts <- umi_comparison_df %>%
+  mutate(
+    quadrant = case_when(
+      mean_upm >= x_thresh & mean_umi.x >= y_thresh ~ "Q1",
+      mean_upm <  x_thresh & mean_umi.x >= y_thresh ~ "Q2",
+      mean_upm <  x_thresh & mean_umi.x <  y_thresh ~ "Q3",
+      mean_upm >= x_thresh & mean_umi.x <  y_thresh ~ "Q4"
+    )
+  ) %>%
+  count(quadrant)
+quad_counts
+# Compute dynamic label positions
+x_min <- min(umi_comparison_df$mean_upm, na.rm = TRUE)
+x_max <- max(umi_comparison_df$mean_upm, na.rm = TRUE)
+y_min <- min(umi_comparison_df$mean_umi.x, na.rm = TRUE)
+y_max <- max(umi_comparison_df$mean_umi.x, na.rm = TRUE)
+
+label_df <- tibble(
+  quadrant = c("Q1", "Q2", "Q3", "Q4"),
+  x = c(
+    10^(log10(x_thresh) + (log10(x_max) - log10(x_thresh)) * 0.8 ), # halfway between 30 and max
+    10^(log10(x_min) + (log10(x_thresh) - log10(x_min)) * 0.1),    # halfway between min and 30
+    10^(log10(x_min) + (log10(x_thresh) - log10(x_min)) * 0.1),
+    10^(log10(x_thresh) + (log10(x_max) - log10(x_thresh)) * 0.8)
+  ),
+  y = c(
+    10^(log10(y_thresh) + (log10(y_max) - log10(y_thresh)) * 0.5),
+    10^(log10(y_thresh) + (log10(y_max) - log10(y_thresh)) * 0.5),
+    10^(log10(y_min) + (log10(y_thresh) - log10(y_min)) / 2),
+    10^(log10(y_min) + (log10(y_thresh) - log10(y_min)) / 2)
+  )
+) %>%
+  left_join(quad_counts, by = "quadrant") %>%
+  mutate(label = paste0(quadrant, ": ", n))
+
+x_breaks <- make_log_breaks(x_min, x_max, include = 30)
+y_breaks <- make_log_breaks(y_min, y_max, include = 1)
+
+# Plot
+p <- ggplot(umi_comparison_df, aes(x = mean_upm, y = mean_umi.x)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 30, linetype = "dashed", color = "blue") +
+  geom_text(
+    data = label_df,
+    aes(x = x, y = y, label = label),
+    hjust = 0, vjust = 0, size = 4, fontface = "bold"
+  ) +
+  scale_x_log10(
+    breaks = x_breaks,
+    labels = nice_log_labels
+  ) +
+  scale_y_log10(
+    breaks = y_breaks,
+    labels = nice_log_labels
+  ) +
+  labs(
+    title = "Mean UMIs per gene per cell vs reference UPM",
+    x = "UPM in reference dataset",
+    y = "Mean UMIs per gene per cell"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+print(p)
+save_both(p, output_folder, paste0("compare_to_reference_scRNA", selected_day))
+```
+
+
+### Save the Seurat object
+```{r}
+SeuratObject::SaveSeuratRds(
+  data_filtered,
+  file = paste0(output_folder,"/cdna_seurat_filtered_", selected_day,".rds")
+)
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```
+
