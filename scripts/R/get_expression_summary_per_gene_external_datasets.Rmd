@@ -1,0 +1,138 @@
+---
+title: "External datasets processing"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+params:
+  mt_threshold: 15
+  ribo_threshold: 15
+  umi_threshold: 2000
+---
+
+```{r}
+library(here)
+
+# data/external/WTC11_10x_5prime/D0_10x5prime_pilot_filtered_feature_bc_matrix.h5
+
+h5_path <- here("data","external", "WTC11_10x_5prime", "D0_10x5prime_pilot_filtered_feature_bc_matrix.h5")
+
+mt_pct_threshold <- params$mt_threshold
+ribo_pct_threshold <- params$ribo_threshold
+umi_min_threshold <- params$umi_threshold
+```
+
+# Summary
+In this notebook I will take the h5 counts from another WTC-11 dataset from Elisa Donnard group and
+compute the mean umis per gene per cell and other summary metrics.
+
+This will be used to QC TAP-seq data.
+
+### Load the data
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+
+so = Seurat::Read10X_h5(h5_path)
+# Creating the mapping gene_symbol -> ensembl_id
+ensembl_ids = rownames(Seurat::Read10X_h5(h5_path, use.names = FALSE))
+data = Seurat::CreateSeuratObject(counts = so)
+data
+```
+
+### Standard Seurat metrics
+
+```{r}
+data[["percent.mt"]] <- Seurat::PercentageFeatureSet(data, pattern = "^MT-", assay = "RNA")
+data[["percent.ribo"]] <- Seurat::PercentageFeatureSet(data, pattern = "^RPS|^RPL|^RRP|^MRP|^FAU", assay = "RNA")
+
+ggplot(data@meta.data, aes(x = nCount_RNA)) +
+  geom_histogram(bins = 50, color = "black", position = "identity", alpha = 0.6) +
+  geom_vline(xintercept=umi_min_threshold, color="red", linetype="dashed")
+
+ggplot(data@meta.data, aes(x = percent.ribo)) +
+  geom_histogram(bins = 50, color = "black", position = "identity", alpha = 0.6) +
+  geom_vline(xintercept=ribo_pct_threshold, color="red", linetype="dashed")
+
+ggplot(data@meta.data, aes(x = percent.mt)) +
+  geom_histogram(bins = 50, color = "black", position = "identity", alpha = 0.6) +
+  geom_vline(xintercept=mt_pct_threshold, color="red", linetype="dashed")
+
+
+plot(data@meta.data$nCount_RNA, data@meta.data$percent.mt,
+     xlab="nCount_RNA", ylab="percent.mt",
+     main="nCount_RNA vs percent.mt")
+abline(h=mt_pct_threshold, col="red", lty=2)
+
+plot(data@meta.data$nCount_RNA, data@meta.data$percent.ribo,
+     xlab="nCount_RNA", ylab="percent.ribo",
+     main="nCount_RNA vs percent.ribo")
+abline(h=ribo_pct_threshold, col="red", lty=2)
+```
+
+### Filter using qc metrics
+
+```{r}
+message("Keep cells with mitochondrial.pct <= ", mt_pct_threshold, 
+        ", nCount_RNA >= ", umi_min_threshold,
+        " and percent.ribo >= ", ribo_pct_threshold, "\n")
+data_filtered = subset(data,
+              subset = percent.mt <= mt_pct_threshold & nCount_RNA >= umi_min_threshold & percent.ribo >= ribo_pct_threshold
+              )
+data_filtered
+message("Number of cells before filtering: ", ncol(data), "\n")
+message("Number of cells filtered out: ", ncol(data) - ncol(data_filtered), "\n")
+message("Number of cells after filtering: ", ncol(data_filtered), "\n")
+```
+
+### UMI statistics
+
+```{r}
+total_umi = Matrix::rowSums(data_filtered@assays$RNA$counts)
+mean_umi = Matrix::rowMeans(data_filtered@assays$RNA$counts)
+```
+
+### CPM normalization
+
+```{r}
+data_filtered = Seurat::NormalizeData(data_filtered, normalization.method = "RC", scale.factor = 1e6)
+
+mean_upm = Matrix::rowMeans(data_filtered@assays$RNA$data)
+
+```
+
+### Final dataframe
+
+```{r}
+out_df = data.frame("gene_symbol"  = row.names(data_filtered),
+                    "ensembl_id" = ensembl_ids,
+                    "total_umi" = total_umi,
+                    "mean_umi" = round(mean_umi,2),
+                    "mean_upm" = round(mean_upm,2)
+                    )
+
+head(out_df)
+```
+
+### Save to file
+
+```{r}
+out_filename = paste0(
+    "D0_10x5prime_pilot_counts_summary",
+    "_ribo", params$ribo_threshold,
+    "_mt", params$mt_threshold,
+    "_umi", params$umi_threshold,
+    ".tsv"
+  )
+output_fnp <- here("data","external", "WTC11_10x_5prime", out_filename)
+
+write.table(out_df, file=output_fnp, row.names=FALSE, col.names=TRUE, sep="\t", quote= FALSE)
+
+```
+
+### Session Info
+```{r}
+sessionInfo()
+```
+
