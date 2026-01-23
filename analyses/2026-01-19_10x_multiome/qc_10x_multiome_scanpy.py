@@ -4,6 +4,7 @@
 #     "marimo>=0.19.0",
 #     "pyzmq>=27.1.0",
 #     "scanpy>=1.11.5",
+#     "snapatac2>=2.8.0",
 # ]
 # ///
 
@@ -22,7 +23,8 @@ def _():
 @app.cell
 def _():
     import scanpy as sc
-    return (sc,)
+    import snapatac2 as snap
+    return sc, snap
 
 
 @app.cell
@@ -30,7 +32,6 @@ def _(sc):
     adata = sc.read_h5ad("../../data/external/10x_multiome_5_timepoints/10x_5timepoints_channel1.h5ad")
 
     adata
-
     return (adata,)
 
 
@@ -65,14 +66,12 @@ def _(adata, sc):
 @app.cell
 def _(adata, sc):
     sc.pl.scatter(adata, "total_counts", "n_genes_by_counts", color="pct_counts_mt")
-
     return
 
 
 @app.cell
 def _(adata, sc):
     sc.pp.filter_cells(adata, min_counts=1000)
-
     return
 
 
@@ -109,17 +108,35 @@ def _(adata):
 
 
 @app.cell
-def _():
+def _(snap):
+    snap.__version__
+
     return
 
 
 @app.cell
-def _():
+def _(snap):
+    data = snap.pp.import_fragments(
+        "../../data/external/10x_multiome_5_timepoints/atac/10x_5timepoints_channel1.fragments.tsv.gz",
+        chrom_sizes=snap.genome.hg38,
+        sorted_by_barcode=False,
+    )
+    return (data,)
+
+
+@app.cell
+def _(data, snap):
+    snap.pl.frag_size_distr(data, interactive=False)
+
     return
 
 
 @app.cell
-def _():
+def _(data, snap):
+    fig = snap.pl.frag_size_distr(data, show=False)
+    fig.update_yaxes(type="log")
+    fig.show()
+
     return
 
 

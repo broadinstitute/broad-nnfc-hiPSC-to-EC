@@ -1,0 +1,411 @@
+---
+title: "03-explore-sceptre-results"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(ggplot2)
+library(ggExtra)
+library(dplyr)
+output_folder <- "results/04-2025-10-27_sceptre_analysis/"
+
+tss_fnp <- "annotations/gencode_tss.bed"
+tss_df <- read.csv(tss_fnp, sep = "\t", header = FALSE)
+colnames(tss_df) <- c("chromosome", "tss_start", "tss_end", "gene_name", "score", "strand", "gene_id", "gene_type", "gene_symbol")
+head(tss_df)
+
+# Remove version numbers from gene_id
+tss_df$gene_id_no_version <- gsub("\\..*$", "", tss_df$gene_id)
+
+gene_design_annotations = "metadata/all_genes_for_primer_design_w_tpm_legacy.tsv"
+gene_design_annotations_df <- read.csv(gene_design_annotations, sep = "\t", header = TRUE)
+
+selected_day = 0
+
+save_ggplot <- function(plot, filename, width = 8, height = 6, dpi = 300) {
+  ggsave(
+    filename = filename,
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = dpi
+  )
+}
+
+```
+
+# Create gene symbol to Ensembl ID mapping
+```{r}
+h5_files_fnp <- list.files(path = "data/h5", pattern = "*.h5", full.names = TRUE, recursive = TRUE)
+# Load the same h5 twice, one time using gene symbols and one time using Ensembl IDs
+temp_seurat <- Seurat::Read10X_h5(h5_files_fnp[1], use.names = TRUE)   # rownames = gene symbol
+gene_symbol_from_h5 <-  rownames(temp_seurat[[1]])
+head(gene_symbol_from_h5)
+
+temp_seurat <- Seurat::Read10X_h5(h5_files_fnp[1], use.names = FALSE)  # rownames = Ensembl IDs
+ensembl_id_from_h5 <- rownames(temp_seurat[[1]])
+head(ensembl_id_from_h5)
+
+# Create a mapping data.frame
+gene_map <- data.frame(
+  symbol = gene_symbol_from_h5,
+  ensembl = ensembl_id_from_h5,
+  stringsAsFactors = FALSE
+)
+head(gene_map)
+```
+
+# Day 0
+```{r}
+selected_day <- 0
+discovery_fnp <- paste0(output_folder, "2025-11-01_sceptre_outputs/day",selected_day,"/sceptre_outputs/sceptre_discovery_results.csv")
+discovery <- read.csv(discovery_fnp, header = TRUE)
+discovery$pct_effect_size <- (discovery$fold_change - 1) * 100
+head(discovery)
+dim(discovery)
+
+# Add three columns target_chr, target_start, target_end from grna_target(chr4:145463887-145463991)
+grna_target_split <- do.call(rbind, strsplit(as.character(discovery$grna_target), "[:-]"))
+discovery$target_chr <- grna_target_split[,1]
+discovery$target_start <- as.numeric(grna_target_split[,2])
+discovery$target_end <- as.numeric(grna_target_split[,3])
+head(discovery)
+
+# Merge with gene map to get gene symbols
+discovery <- merge(discovery, gene_map, by.x = "response_id", by.y = "symbol", all.x = TRUE)
+head(discovery)
+
+# Filter TSS, keep genes in discovery results
+tss_filtered <- tss_df[tss_df$gene_id_no_version %in% discovery$ensembl, ]
+head(tss_filtered)
+
+
+# Compute distance from response gene TSS to grna target
+# 0) Keep an id to collapse back after expanding to all TSS rows
+discovery <- discovery %>% mutate(.id = row_number())
+
+# 1) (Optional but recommended) normalize chromosome naming so they match
+tss_filtered2 <- tss_df %>%
+  filter(gene_id_no_version %in% discovery$ensembl) %>%
+  mutate(chromosome = if_else(grepl("^chr", chromosome), chromosome, paste0("chr", chromosome)))
+
+discovery2 <- discovery %>%
+  mutate(target_chr = if_else(grepl("^chr", target_chr), target_chr, paste0("chr", target_chr)))
+
+# 2) Expand: join each discovery row to ALL its TSS for that gene
+dx <- discovery2 %>%
+  select(.id, ensembl, target_chr, target_start, target_end) %>%
+  inner_join(
+    tss_filtered2 %>% select(gene_id_no_version, chromosome, tss_start, tss_end),
+    by = c("ensembl" = "gene_id_no_version")
+  ) %>%
+  # keep same-chromosome TSS only (drop cross-chromosome)
+  filter(target_chr == chromosome) %>%
+  # 3) Per-pair distance (0 if overlap)
+  mutate(distance_pair = pmax(0L, tss_start - target_end, target_start - tss_end))
+
+# 4) Take the MIN distance per discovery row; keep the TSS that achieved it
+nearest <- dx %>%
+  group_by(.id) %>%
+  slice_min(distance_pair, with_ties = FALSE) %>%
+  ungroup() %>%
+  transmute(
+    .id,
+    distance_to_tss = distance_pair,
+    nearest_tss_chr   = chromosome,
+    nearest_tss_start = tss_start,
+    nearest_tss_end   = tss_end
+  )
+
+# 5) Bring the result back onto the original discovery table
+discovery_min <- discovery %>%
+  left_join(nearest, by = ".id")
+
+# Peek
+discovery_min %>% select(grna_target, ensembl, distance_to_tss, nearest_tss_chr, nearest_tss_start, nearest_tss_end) %>% head()
+
+discovery_min2 = merge(discovery_min, gene_design_annotations_df %>% select(gene_base_id, type), by.x = "ensembl", by.y = "gene_base_id", all.x = TRUE)
+
+table(discovery_min2$type, discovery_min2$significant)
+
+df <- discovery_min %>%
+  mutate(percent_change = pct_effect_size,
+         distance = abs(distance_to_tss)) %>%             # Use absolute distance
+  arrange(significant) %>% # Order by significance so these points appear on top of the insignificant points
+  mutate(effect_color = case_when(
+    significant == TRUE & percent_change > 0 ~ "Positive",
+    significant == TRUE & percent_change < 0 ~ "Negative",
+    TRUE ~ "Non-significant"
+  ))
+
+# Create the plot
+p <- ggplot(df, aes(x = distance / 1e6, y = percent_change, color = effect_color)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Dotted line at y = 0
+  scale_color_manual(values = c("Positive" = "blue", "Negative" = "red", "Non-significant" = "grey"),
+                     labels = c("Positive" = "Pos.", "Negative" = "Neg.", "Non-significant" = "Non-sig")) +
+  #ylim(-100, 100) +
+  labs(title = "Distance by Effect Size",
+       subtitle = paste0("Day ", selected_day),
+       x = "Distance to TSS (Mb)", 
+       y = "CRISPRi effect size \n(% change)", 
+       color = "CRISPR") +
+  theme_classic(base_size = 14) +  # Increase base font size
+  theme(
+    plot.title = element_text(vjust = -1, margin = margin(b = 10), size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    strip.background = element_blank(),
+    legend.position = "bottom"
+  )
+
+
+p <- ggMarginal(p, type = "density", margins = "both", groupColour = TRUE, groupFill = FALSE)
+
+p
+```
+
+# Day 2
+
+```{r}
+selected_day <- 2
+discovery_fnp <- paste0(output_folder, "2025-11-01_sceptre_outputs/day",selected_day,"/sceptre_outputs/sceptre_discovery_results.csv")
+discovery <- read.csv(discovery_fnp, header = TRUE)
+discovery$pct_effect_size <- (discovery$fold_change - 1) * 100
+head(discovery)
+dim(discovery)
+
+# Add three columns target_chr, target_start, target_end from grna_target(chr4:145463887-145463991)
+grna_target_split <- do.call(rbind, strsplit(as.character(discovery$grna_target), "[:-]"))
+discovery$target_chr <- grna_target_split[,1]
+discovery$target_start <- as.numeric(grna_target_split[,2])
+discovery$target_end <- as.numeric(grna_target_split[,3])
+head(discovery)
+
+# Merge with gene map to get gene symbols
+discovery <- merge(discovery, gene_map, by.x = "response_id", by.y = "symbol", all.x = TRUE)
+head(discovery)
+
+# Filter TSS, keep genes in discovery results
+tss_filtered <- tss_df[tss_df$gene_id_no_version %in% discovery$ensembl, ]
+head(tss_filtered)
+
+
+# Compute distance from response gene TSS to grna target
+# 0) Keep an id to collapse back after expanding to all TSS rows
+discovery <- discovery %>% mutate(.id = row_number())
+
+# 1) (Optional but recommended) normalize chromosome naming so they match
+tss_filtered2 <- tss_df %>%
+  filter(gene_id_no_version %in% discovery$ensembl) %>%
+  mutate(chromosome = if_else(grepl("^chr", chromosome), chromosome, paste0("chr", chromosome)))
+
+discovery2 <- discovery %>%
+  mutate(target_chr = if_else(grepl("^chr", target_chr), target_chr, paste0("chr", target_chr)))
+
+# 2) Expand: join each discovery row to ALL its TSS for that gene
+dx <- discovery2 %>%
+  select(.id, ensembl, target_chr, target_start, target_end) %>%
+  inner_join(
+    tss_filtered2 %>% select(gene_id_no_version, chromosome, tss_start, tss_end),
+    by = c("ensembl" = "gene_id_no_version")
+  ) %>%
+  # keep same-chromosome TSS only (drop cross-chromosome)
+  filter(target_chr == chromosome) %>%
+  # 3) Per-pair distance (0 if overlap)
+  mutate(distance_pair = pmax(0L, tss_start - target_end, target_start - tss_end))
+
+# 4) Take the MIN distance per discovery row; keep the TSS that achieved it
+nearest <- dx %>%
+  group_by(.id) %>%
+  slice_min(distance_pair, with_ties = FALSE) %>%
+  ungroup() %>%
+  transmute(
+    .id,
+    distance_to_tss = distance_pair,
+    nearest_tss_chr   = chromosome,
+    nearest_tss_start = tss_start,
+    nearest_tss_end   = tss_end
+  )
+
+# 5) Bring the result back onto the original discovery table
+discovery_min <- discovery %>%
+  left_join(nearest, by = ".id")
+
+# Peek
+discovery_min %>% select(grna_target, ensembl, distance_to_tss, nearest_tss_chr, nearest_tss_start, nearest_tss_end) %>% head()
+
+
+discovery_min2 = merge(discovery_min, gene_design_annotations_df %>% select(gene_base_id, type), by.x = "ensembl", by.y = "gene_base_id", all.x = TRUE)
+
+table(discovery_min2$type, discovery_min2$significant)
+
+df <- discovery_min %>%
+  mutate(percent_change = pct_effect_size,
+         distance = abs(distance_to_tss)) %>%             # Use absolute distance
+  arrange(significant) %>% # Order by significance so these points appear on top of the insignificant points
+  mutate(effect_color = case_when(
+    significant == TRUE & percent_change > 0 ~ "Positive",
+    significant == TRUE & percent_change < 0 ~ "Negative",
+    TRUE ~ "Non-significant"
+  ))
+
+# Create the plot
+p <- ggplot(df, aes(x = distance / 1e6, y = percent_change, color = effect_color)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Dotted line at y = 0
+  scale_color_manual(values = c("Positive" = "blue", "Negative" = "red", "Non-significant" = "grey"),
+                     labels = c("Positive" = "Pos.", "Negative" = "Neg.", "Non-significant" = "Non-sig")) +
+  ylim(-100, 100) +
+  labs(title = "Distance by Effect Size",
+       subtitle = paste0("Day ", selected_day),
+       x = "Distance to TSS (Mb)", 
+       y = "CRISPRi effect size \n(% change)", 
+       color = "CRISPR") +
+  theme_classic(base_size = 14) +  # Increase base font size
+  theme(
+    plot.title = element_text(vjust = -1, margin = margin(b = 10), size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    strip.background = element_blank(),
+    legend.position = "bottom"
+  )
+
+
+p <- ggMarginal(p, type = "density", margins = "both", groupColour = TRUE, groupFill = FALSE)
+
+p
+```
+
+# Day 4
+```{r}
+selected_day <- 4
+discovery_fnp <- paste0(output_folder, "2025-11-01_sceptre_outputs/day",selected_day,"/sceptre_outputs/sceptre_discovery_results.csv")
+discovery <- read.csv(discovery_fnp, header = TRUE)
+discovery$pct_effect_size <- (discovery$fold_change - 1) * 100
+head(discovery)
+dim(discovery)
+
+# Add three columns target_chr, target_start, target_end from grna_target(chr4:145463887-145463991)
+grna_target_split <- do.call(rbind, strsplit(as.character(discovery$grna_target), "[:-]"))
+discovery$target_chr <- grna_target_split[,1]
+discovery$target_start <- as.numeric(grna_target_split[,2])
+discovery$target_end <- as.numeric(grna_target_split[,3])
+head(discovery)
+
+# Merge with gene map to get gene symbols
+discovery <- merge(discovery, gene_map, by.x = "response_id", by.y = "symbol", all.x = TRUE)
+head(discovery)
+
+# Filter TSS, keep genes in discovery results
+tss_filtered <- tss_df[tss_df$gene_id_no_version %in% discovery$ensembl, ]
+head(tss_filtered)
+
+
+# Compute distance from response gene TSS to grna target
+# 0) Keep an id to collapse back after expanding to all TSS rows
+discovery <- discovery %>% mutate(.id = row_number())
+
+# 1) (Optional but recommended) normalize chromosome naming so they match
+tss_filtered2 <- tss_df %>%
+  filter(gene_id_no_version %in% discovery$ensembl) %>%
+  mutate(chromosome = if_else(grepl("^chr", chromosome), chromosome, paste0("chr", chromosome)))
+
+discovery2 <- discovery %>%
+  mutate(target_chr = if_else(grepl("^chr", target_chr), target_chr, paste0("chr", target_chr)))
+
+# 2) Expand: join each discovery row to ALL its TSS for that gene
+dx <- discovery2 %>%
+  select(.id, ensembl, target_chr, target_start, target_end) %>%
+  inner_join(
+    tss_filtered2 %>% select(gene_id_no_version, chromosome, tss_start, tss_end),
+    by = c("ensembl" = "gene_id_no_version")
+  ) %>%
+  # keep same-chromosome TSS only (drop cross-chromosome)
+  filter(target_chr == chromosome) %>%
+  # 3) Per-pair distance (0 if overlap)
+  mutate(distance_pair = pmax(0L, tss_start - target_end, target_start - tss_end))
+
+# 4) Take the MIN distance per discovery row; keep the TSS that achieved it
+nearest <- dx %>%
+  group_by(.id) %>%
+  slice_min(distance_pair, with_ties = FALSE) %>%
+  ungroup() %>%
+  transmute(
+    .id,
+    distance_to_tss = distance_pair,
+    nearest_tss_chr   = chromosome,
+    nearest_tss_start = tss_start,
+    nearest_tss_end   = tss_end
+  )
+
+# 5) Bring the result back onto the original discovery table
+discovery_min <- discovery %>%
+  left_join(nearest, by = ".id")
+
+# Peek
+discovery_min %>% select(grna_target, ensembl, distance_to_tss, nearest_tss_chr, nearest_tss_start, nearest_tss_end) %>% head()
+
+discovery_min2 = merge(discovery_min, gene_design_annotations_df %>% select(gene_base_id, type), by.x = "ensembl", by.y = "gene_base_id", all.x = TRUE)
+
+table(discovery_min2$type, discovery_min2$significant)
+
+df <- discovery_min %>%
+  mutate(percent_change = pct_effect_size,
+         distance = abs(distance_to_tss)) %>%             # Use absolute distance
+  arrange(significant) %>% # Order by significance so these points appear on top of the insignificant points
+  mutate(effect_color = case_when(
+    significant == TRUE & percent_change > 0 ~ "Positive",
+    significant == TRUE & percent_change < 0 ~ "Negative",
+    TRUE ~ "Non-significant"
+  ))
+
+# Create the plot
+p <- ggplot(df, aes(x = distance / 1e6, y = percent_change, color = effect_color)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Dotted line at y = 0
+  scale_color_manual(values = c("Positive" = "blue", "Negative" = "red", "Non-significant" = "grey"),
+                     labels = c("Positive" = "Pos.", "Negative" = "Neg.", "Non-significant" = "Non-sig")) +
+  ylim(-100, 100) +
+  labs(title = "Distance by Effect Size",
+       subtitle = paste0("Day ", selected_day),
+       x = "Distance to TSS (Mb)", 
+       y = "CRISPRi effect size \n(% change)", 
+       color = "CRISPR") +
+  theme_classic(base_size = 14) +  # Increase base font size
+  theme(
+    plot.title = element_text(vjust = -1, margin = margin(b = 10), size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    strip.background = element_blank(),
+    legend.position = "bottom"
+  )
+
+
+p <- ggMarginal(p, type = "density", margins = "both", groupColour = TRUE, groupFill = FALSE)
+
+p
+```
+
+```{r}
+selected_day <- 4
+discovery_fnp <- paste0(output_folder, "2025-11-01_sceptre_outputs/day",selected_day,"/sceptre_outputs/sceptre_power_check_results.csv")
+discovery <- read.csv(discovery_fnp, header = TRUE)
+discovery$pct_effect_size <- (discovery$fold_change - 1) * 100
+head(discovery)
+dim(discovery)
+
+discovery$fdr_adjusted <- p.adjust(discovery$p_value, method = "fdr")
+# Merge with gene map to get gene symbols
+discovery <- merge(discovery, gene_map, by.x = "response_id", by.y = "symbol", all.x = TRUE)
+head(discovery)
+
+discovery_min2 = merge(discovery, gene_design_annotations_df %>% select(gene_base_id, type), by.x = "ensembl", by.y = "gene_base_id", all.x = TRUE)
+
+discovery_min2$significant <- discovery_min2$fdr_adjusted < 0.1
+
+table(discovery_min2$type, discovery_min2$significant)
+```
+

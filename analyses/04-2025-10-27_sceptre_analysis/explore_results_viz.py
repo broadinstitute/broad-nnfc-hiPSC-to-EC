@@ -67,6 +67,17 @@ def _(datetime, fmt_float, fmt_int, mo, results_flt, summary):
                 value=fmt_int(row_summary["n_significant"]),
                 bordered=True,
             ).style(min_width="240px"),
+        ]
+
+        rows.append(
+            mo.hstack(
+                day_cards,
+                #align="center",
+                #justify="space-around",
+            )
+        )
+
+        day_cards = [
 
             mo.stat(
                 label=f"Day {day} · significant",
@@ -99,7 +110,17 @@ def _(datetime, fmt_float, fmt_int, mo, results_flt, summary):
                 direction="decrease",
                 caption="Negative effect",
             ).style(min_width="240px"),
+        ]
 
+        rows.append(
+            mo.hstack(
+                day_cards,
+                #align="center",
+                #justify="space-around",
+            )
+        )
+
+        day_cards = [
             mo.stat(
                 label=f"Day {day} · significant",
                 value=fmt_int(row_summary["n_pos"]),
@@ -136,8 +157,8 @@ def _(datetime, fmt_float, fmt_int, mo, results_flt, summary):
         rows.append(
             mo.hstack(
                 day_cards,
-                align="center",
-                justify="space-around",
+                #align="center",
+                #justify="space-around",
             )
         )
 
@@ -192,13 +213,7 @@ def _(alt, mo, results_flt):
     )
     chart_bar = mo.ui.altair_chart(bars)
     chart_bar
-    return chart_bar, sig_counts, sig_days
-
-
-@app.cell
-def _(sig_days):
-    sig_days
-    return
+    return chart_bar, sig_counts
 
 
 @app.cell
@@ -304,7 +319,6 @@ def _(Network, mo, selected_intersection_table, sig_counts_flt):
     """
 
     mo.vstack([mo.md(legend_md), mo.iframe(html)])
-
     return
 
 

@@ -10,7 +10,7 @@ output:
     theme: flatly
     highlight: tango
 params:
-  selected_day: 0
+  selected_day: 4
   grna_threshold: 3
   threads: 8
 ---
@@ -496,7 +496,7 @@ sceptre_object <- assign_grnas(
   n_processors = n_processors
 )
 
-print(sceptre_object)
+plot(sceptre_object)
 ```
 
 ## Quality control
