@@ -235,3 +235,4 @@ results/
 __marimo__/
 metadata/hiPSC-HPC/metadata_genes.csv
 plots/
+igv-sessions/
