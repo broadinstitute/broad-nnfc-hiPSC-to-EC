@@ -1,0 +1,574 @@
+---
+title: "DC-TAP Endothelial differentiation analysis - gRNA"
+author: "Eugenio Mattei"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: flatly
+    highlight: tango
+params:
+  selected_day: 4
+  grna_threshold: 3
+  threads: 8
+---
+
+```{r}
+library(here)
+
+# Path to this Rmd while knitting
+this_rmd <- knitr::current_input()
+
+# Analysis folder name
+analysis_dirname <- "2026-02-10_find_best_grna_umi_threshold"
+
+# Parameterized results folder
+output_folder <- here(
+  "results",
+  analysis_dirname,
+  paste0(
+    "day", params$selected_day,
+    "_grna", params$grna_threshold
+  )
+)
+
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+output_folder
+```
+
+# hiPSC -> EC gRNA
+
+```{r}
+library(hdf5r)
+library(dplyr)
+library(sceptre)
+library(Seurat)
+library(ggplot2)
+library(ggtext)
+library(ggExtra)
+options(scipen=999) # to avoid scientific notation
+
+
+selected_day          <- params$selected_day
+assign_grna_threshold <- params$grna_threshold
+n_processors          <- params$thread
+
+# Custom functions
+source(here("scripts", "R", "utils.R"))
+```
+
+## Parameters and file paths
+
+```{r}
+# INPUTS
+metadata_samples_fnp <- here("metadata", "metadata_sample_full.tsv")
+metadata_genes_fnp   <- here("metadata", "metadata_genes_final.csv")
+```
+
+## Load the metadata
+
+```{r}
+metadata_samples_df <- read.csv(metadata_samples_fnp, sep = "\t")
+
+metadata_genes_df <- read.csv(metadata_genes_fnp)
+head(metadata_genes_df,5)
+
+target_genes <- metadata_genes_df$intended_target_gene_symbol
+target_genes <- unique(target_genes) # Because we have multiple primers for the same gene
+
+h5_files_fnp <- list.files(path = here("data","h5"), pattern = "*.h5", full.names = TRUE, recursive = TRUE)
+
+h5_sample_names <- sub(".*/(.*)_sample_filtered_feature_bc_matrix\\.h5$", "\\1", h5_files_fnp)
+
+head(h5_sample_names)
+```
+
+## Load filtered cDNA Seurat object
+
+```{r}
+day_key <- paste0("day", selected_day)
+
+cdna_rds_folder <- c(
+  day0 = here("results","2026-01-20_load_counts_and_qc", "day0_ribo20_tumi55_umi1500"),
+  day2 = here("results","2026-01-20_load_counts_and_qc", "day2_ribo16_tumi45_umi1000"),
+  day4 = here("results","2026-01-20_load_counts_and_qc", "day4_ribo6_tumi25_umi1000")
+)[[day_key]]
+
+cdna_rds_filename <- paste0("cdna_seurat_filtered_", selected_day, ".rds")
+cdns_rds_fnp <- file.path(cdna_rds_folder, cdna_rds_filename)
+
+seurat_object <- readRDS(cdns_rds_fnp)
+```
+
+## Merge into one count matrix
+
+```{r}
+umi_layers <- grep("^counts(\\.|$)", Layers(seurat_object), value = TRUE)
+stopifnot(length(seurat_object) > 0)
+# 2. Extract all the matrices and put them in a list
+counts_umi_mats <- lapply(
+  umi_layers,
+  function(ly) SeuratObject::GetAssayData(seurat_object, assay="RNA", layer = ly)
+  )
+# 3. Combine them together
+counts_umi_mat <- do.call(cbind, counts_umi_mats)   # genes x cells, UMI units;
+
+# Free memory
+rm(counts_umi_mats, seurat_object)
+gc()
+```
+
+
+## Load gRNA count matrix
+
+```{r}
+# Keep only the selected day
+h5_sample_names <- metadata_samples_df$entity.endothelial_id[metadata_samples_df$day == selected_day]
+#h5_sample_names <- head(h5_sample_names, n=5)
+
+# Match h5 files to samples
+target_files <- setNames(
+  paste0(h5_sample_names, "_sample_filtered_feature_bc_matrix.h5"),
+  h5_sample_names
+)
+
+# Check all the files exist
+h5_files_fnp2 <- h5_files_fnp[match(target_files, basename(h5_files_fnp))]
+names(h5_files_fnp2) <- h5_sample_names
+stopifnot(!anyNA(h5_files_fnp2))
+
+# Load them into Seurat
+seurat_objects_list <- Map(
+  f = read_10x_grna,
+  h5 = h5_files_fnp2,
+  sample_name = names(h5_files_fnp2)
+)
+
+# Merge (handle 1 sample)
+if (length(seurat_objects_list) == 1) {
+  data <- seurat_objects_list[[1]]
+} else {
+  data <- merge(
+    x = seurat_objects_list[[1]],
+    y = seurat_objects_list[2:length(seurat_objects_list)],
+    merge.data = TRUE
+  )
+sapply(seurat_objects_list, Seurat::Project)
+}
+
+data
+```
+
+## Merge into one count matrix
+
+```{r}
+guide_layers <- grep("^counts(\\.|$)", Layers(data), value = TRUE)
+stopifnot(length(data) > 0)
+# 2. Extract all the matrices and put them in a list
+guide_mats <- lapply(
+  guide_layers,
+  function(ly) SeuratObject::GetAssayData(data, assay="gRNA", layer = ly)
+  )
+
+# 3. Combine them together
+guide_umi_mat <- do.call(cbind, guide_mats)   # guides x cells, UMI units;
+
+guide_umi_mat <- guide_umi_mat[, colnames(counts_umi_mat), drop = FALSE]
+# Free memory
+rm(guide_mats, data)
+gc()
+```
+
+## Inputs and outputs for the analysis
+
+SCEPTRE required as inputs:
+ - gene counts: created above and stored in counts_umi_mat
+ - guide counts: created above and stored in guide_umi_mat
+ - gRNA to element map: `results/03-2025-10-24_create_sceptre_input/all_guides_annotations_final.tsv`
+ - positive control pairs: `results/03-2025-10-24_create_sceptre_input/positive_control_pairs_dedup_final.tsv`
+ - discovery pairs: `results/03-2025-10-24_create_sceptre_input/discovery_pairs_no_positive_controls_final.tsv`
+ 
+```{r}
+metadata_samples_fnp <- here(
+  "metadata",
+  "metadata_sample_endothelial_terra.tsv"
+)
+
+metadata_genes_fnp <- here(
+  "metadata",
+  "metadata_genes_final.csv"
+)
+
+grna_to_element_map_fnp <- here(
+  "results",
+  "03-2025-10-24_create_sceptre_input",
+  "all_guides_annotations_final.tsv"
+)
+
+discovery_pairs_fnp <- here(
+  "results",
+  "03-2025-10-24_create_sceptre_input",
+  "discovery_pairs_no_positive_controls_final.tsv"
+)
+
+positive_pairs_fnp <- here(
+  "results",
+  "03-2025-10-24_create_sceptre_input",
+  "positive_control_pairs_dedup_final.tsv"
+)
+```
+
+## Guide annotations
+
+```{r}
+guide_element_map = read.csv(
+  grna_to_element_map_fnp,
+  header=T,
+  sep="\t"
+  )
+
+plot_df <- guide_element_map %>%
+  count(source)
+
+p <- ggplot(plot_df, aes(y = source, x = n)) +
+  geom_col() +
+  geom_text(
+    aes(label = n),
+    hjust = -0.1,
+    size = 4
+  ) +
+  labs(
+    title = "Guide Annotations",
+    x = "Number of guides",
+    y = ""
+  ) +
+  theme_minimal(base_size = 14)
+print(p)
+
+save_both(p,output_folder, paste0("guide_annotations_barplot", selected_day))
+```
+
+## Formatting for SCEPTRE
+
+```{r}
+# Changing "safe-targeting" to "non-targeting"
+guide_element_map_sceptre <- guide_element_map %>%
+  mutate(grna_target = if_else(grna_target == "safe-targeting",
+                               "non-targeting",
+                               grna_target)
+         )
+
+# Change the '_' to '-' in the gRNA IDs to match the gRNA count matrix
+guide_element_map_sceptre$grna_id <- gsub("_", "-", guide_element_map_sceptre$grna_id)
+
+```
+
+## Discovery and positive control pairs
+
+```{r}
+discovery_pairs = read.table(
+  discovery_pairs_fnp,
+  header=T,
+  sep="\t"
+)
+
+# Changing the response id to gene name
+discovery_pairs$ensembl_id = discovery_pairs$response_id
+discovery_pairs$response_id = discovery_pairs$gene_symbol
+
+message("Number of discovery pairs: ", nrow(discovery_pairs))
+
+positive_pairs = read.table(
+  positive_pairs_fnp,
+  header=T,
+  sep="\t"
+)
+
+# Changing the response id to gene name
+positive_pairs$ensembl_id = positive_pairs$response_id
+positive_pairs$response_id = positive_pairs$gene_symbol
+
+
+positive_pairs_sceptre = positive_pairs[positive_pairs$response_id %in% metadata_genes_df$intended_target_gene_symbol,]
+message("Number of positive pairs: ", nrow(positive_pairs_sceptre))
+
+# Verify that all the elements in the pairs are in the gRNA to element map
+all(positive_pairs$grna_target %in% guide_element_map_sceptre$grna_target)
+all(discovery_pairs$grna_target %in%  guide_element_map_sceptre$grna_target)
+```
+
+
+## Do rep1/2 have more counts than 3/4
+
+```{r}
+cell_totals <- Matrix::colSums(guide_umi_mat)
+
+rep <- sub("^.*?(rep\\d{2}).*$", "\\1", names(cell_totals))  # extracts rep01, rep02, ...
+rep_group <- dplyr::case_when(
+  rep %in% c("rep01", "rep02") ~ "rep01+rep02",
+  rep %in% c("rep03", "rep04") ~ "rep03+rep04",
+  TRUE ~ NA_character_
+)
+
+df <- tibble(
+  cell = names(cell_totals),
+  rep = rep,
+  rep_group = rep_group,
+  guide_umi = as.numeric(cell_totals)
+) %>%
+  filter(!is.na(rep_group))
+
+table(df$rep)
+table(df$rep_group)
+summary(df$guide_umi)
+
+p <- ggplot(df, aes(x = rep_group, y = guide_umi)) +
+  geom_violin(trim = TRUE) +
+  geom_boxplot(width = 0.15, outlier.alpha = 0.2) +
+  scale_y_log10() +
+  labs(
+    title = "Per-cell gRNA UMI totals by replicate group",
+    x = "",
+    y = "gRNA UMIs per cell (colSums)"
+  ) +
+  theme_minimal(base_size = 14)
+
+print(p)
+
+save_both(p, output_folder, paste0("gRNA_umi_totals_by_replicate_violin", selected_day))
+
+wilcox.test(guide_umi ~ rep_group, data = df)
+
+df %>% group_by(rep_group) %>% summarise(
+  n_cells = n(),
+  median = median(guide_umi),
+  mean = mean(guide_umi)
+)
+
+med <- df %>% group_by(rep_group) %>% summarise(median = median(guide_umi))
+med$fold_change <- med$median / med$median[med$rep_group == "rep01+rep02"]
+med
+
+
+
+p <- ggplot(df, aes(x = guide_umi, fill = rep_group)) +
+  geom_density(alpha = 0.35) +
+  scale_x_log10() +
+  labs(
+    title = "Distribution of per-cell gRNA UMI totals",
+    x = "gRNA UMIs per cell (log10 scale)",
+    y = "Density",
+    fill = "Group"
+  ) +
+  theme_minimal(base_size = 14)
+
+print(p)
+save_both(p, output_folder, paste0("gRNA_umi_totals_by_replicate_density", selected_day))
+```
+
+## Check assignments
+
+```{r}
+count_guides_above <- function(mat, T) {
+  Matrix::colSums(mat >= T)
+}
+
+T_grid <- c(3,5,8,10,12,15,20,25,30,40,100)
+
+
+df_counts <- tibble(
+  cell = colnames(guide_umi_mat),
+  rep_group = rep_group
+) %>%
+  bind_cols(
+    as_tibble(
+      sapply(T_grid, function(T) count_guides_above(guide_umi_mat, T))
+    ) %>% setNames(paste0("T_", T_grid))
+  )
+
+summary_df <- df_counts %>%
+  tidyr::pivot_longer(starts_with("T_"), names_to = "T", values_to = "n_guides") %>%
+  mutate(T = as.numeric(sub("T_", "", T))) %>%
+  filter(n_guides > 0) %>%
+  group_by(rep_group, T) %>%
+  summarise(
+    n_cells = dplyr::n(),
+    median_guides = median(n_guides),
+    mean_guides = mean(n_guides),
+    sd_guides = sd(n_guides),
+    se_guides = sd_guides / sqrt(n_cells),
+    q25 = quantile(n_guides, 0.25),
+    q50 = quantile(n_guides, 0.50),
+    q75 = quantile(n_guides, 0.75),
+    .groups = "drop"
+  )
+
+p <- ggplot(summary_df, aes(x = T, y = mean_guides, color = rep_group)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(
+    aes(
+      ymin = mean_guides - 1.96 * se_guides,
+      ymax = mean_guides + 1.96 * se_guides
+    ),
+    width = 0.8
+  ) +
+  scale_x_continuous(breaks = T_grid) +
+  labs(
+    title = "Mean number of guides per cell vs threshold (cells with 0 guides removed)",
+    x = "Per-guide UMI threshold",
+    y = "Mean guides assigned per cell",
+    color = "Replicate group"
+  ) +
+  theme_minimal(base_size = 14)
+print(p)
+save_both(p, output_folder, paste0("moi_at_different_thresholds_by_replicate", selected_day))
+
+
+
+summary_assign <- df_counts %>%
+  tidyr::pivot_longer(starts_with("T_"), names_to = "T", values_to = "n_guides") %>%
+  mutate(T = as.numeric(sub("T_", "", T))) %>%
+  group_by(rep_group, T) %>%
+  summarise(
+    frac_assigned = mean(n_guides > 0),
+    .groups = "drop"
+  )
+
+p <- ggplot(summary_assign, aes(x = T, y = frac_assigned, color = rep_group)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(breaks = T_grid) +
+  labs(
+    title = "Fraction of cells with ≥1 guide vs threshold",
+    x = "Per-guide UMI threshold",
+    y = "Cells assigned ≥1 guide",
+    color = "Replicate group"
+  ) +
+  theme_minimal(base_size = 14)
+
+print(p)
+
+save_both(p, output_folder, paste0("fraction_of_cells_with_guide_by_replicate", selected_day))
+```
+
+
+## Create the SCEPTRE object
+
+```{r}
+# Create the initial SCEPTRE object
+sceptre_object = sceptre::import_data(
+  response_matrix = counts_umi_mat[unique(metadata_genes_df$intended_target_gene_symbol),,drop=FALSE],
+  grna_matrix = guide_umi_mat,
+  grna_target_data_frame = guide_element_map_sceptre[,c(1,2)],
+  moi = "high",
+)
+print(sceptre_object)
+
+# Make sure the genes are present in the pairs
+all(unique(c(discovery_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
+all(unique(c(positive_pairs_sceptre$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
+
+
+# Set the analysis parameters
+sceptre_object <- set_analysis_parameters(
+  sceptre_object = sceptre_object,
+  discovery_pairs = discovery_pairs[,c(1,2)],
+  positive_control_pairs = positive_pairs_sceptre[,c(1,2)],
+  side = "both"
+)
+print(sceptre_object)
+```
+
+## Assign guides to cells
+
+```{r}
+plot_grna_count_distributions(sceptre_object)
+# Assign gRNAs to cells using `thresholding` method and 10 UMIs threshold
+sceptre_object <- assign_grnas(
+  sceptre_object = sceptre_object,
+  parallel = TRUE,
+  method = "thresholding",
+  threshold = assign_grna_threshold,
+  n_processors = n_processors
+)
+
+plot(sceptre_object)
+```
+
+## Quality control
+
+```{r}
+sceptre_object <- run_qc(sceptre_object,)
+plot(sceptre_object)
+
+# compute the number of cells per element
+element_grna_counts <- sapply(sceptre_object@grna_assignments$grna_group_idxs, function(idxs) {
+  length(idxs)
+})
+
+# Plot the distribution of number of gRNAs per element
+histogram_data <- hist(element_grna_counts, breaks = 30, plot = FALSE)
+
+# 2. Find the overall maximum count (the tallest bar)
+max_bar_height <- max(histogram_data$counts)
+
+# 3. Calculate the target Y position (50% of the max height)
+y_target_position <- max_bar_height
+
+p <- ggplot(data.frame(num_cells = element_grna_counts), aes(x = num_cells)) +
+  geom_histogram(bins = 50, fill = "lightblue", color = "black") +
+  geom_vline(xintercept = median(element_grna_counts), color = "red", linetype = "dashed", linewidth = 1) +
+  labs(title = "Distribution of number of cells per element",
+       subtitle = paste0("Day ", selected_day, " - Number of elements (n=", length(element_grna_counts), ")"),
+       x = "Number of cells per element",
+       y = "Number of elements") +
+  annotate("text", x = median(element_grna_counts) * 1.5, y = y_target_position,
+           label = paste0("Median: ", round(median(element_grna_counts), 2)),
+           color = "red", size = 5) +
+  theme_minimal(base_size = 14)
+
+save_both(p, output_folder, paste0("sceptre_number_of_cells_per_element_day", selected_day))
+```
+
+## Calibration check
+
+```{r}
+sceptre_object <- run_calibration_check(sceptre_object, parallel = TRUE, n_processors = n_processors)
+print(sceptre_object)
+```
+
+## Power Check
+```{r}
+sceptre_object <- run_power_check(sceptre_object, parallel = TRUE, n_processors = n_processors)
+print(sceptre_object)
+```
+
+## Write outputs
+```{r}
+write_outputs_to_directory(
+  sceptre_object = sceptre_object,
+  directory = file.path(output_folder,"sceptre_outputs")
+)
+```
+
+```{r}
+tmp_result <- get_result(
+  sceptre_object = sceptre_object,
+  analysis = "run_power_check"
+)
+write.csv(tmp_result,
+          file = file.path(output_folder,"sceptre_power_check_results.csv"),
+          row.names = FALSE,
+          quote = FALSE)
+```
+
+```{r}
+saveRDS(sceptre_object,
+        file = file.path(output_folder,"sceptre_object.rds")
+        )
+```
+
