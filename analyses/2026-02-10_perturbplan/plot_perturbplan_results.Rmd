@@ -1,0 +1,118 @@
+---
+title: "DC-TAP Endothelial differentiation analysis - perturbplan results"
+author: "Eugenio Mattei"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: flatly
+    highlight: tango
+params:
+  selected_day: 0
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(here)
+library(MuData)
+library(sceptre)
+library(dplyr)
+library(tibble)
+library(methods)
+library(SummarizedExperiment)
+library(MultiAssayExperiment)
+
+options(scipen = 999)
+
+selected_day <- params$selected_day
+source(here("scripts", "R", "utils.R"))
+
+# ---- Paths ----
+analysis_dirname <- "2026-02-10_perturbplan"
+output_folder <- here("results", analysis_dirname, paste0("day", selected_day))
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+
+perturbplan_object_path <- here(
+  output_folder,
+  "perturbplan_es_15_pval_0.1_both.h5mu"
+)
+```
+
+
+```{r}
+# Load results
+perturb_results = readH5MU(perturbplan_object_path)
+perturb_results
+```
+
+```{r}
+perturbplan_power = perturb_results@metadata$power_results$individual_power
+names(perturbplan_power)
+```
+
+
+```{r}
+test_results = as.data.frame(perturb_results@metadata$test_results)
+test_results$effect_size = (2^test_results$log2_fc -1) *100
+test_results$fdr = p.adjust(test_results$p_value, method = "fdr")
+test_results$pair_name = paste0(test_results$intended_target_name,"_",test_results$gene_id)
+head(test_results)
+```
+
+
+```{r}
+power_temp = as.data.frame(perturbplan_power)
+rownames(power_temp) = paste0(power_temp$grna_target,"_",power_temp$response_id)
+
+power = cbind(test_results,power_temp[test_results$pair_name,])
+power <- dplyr::filter(power, !is.na(effect_size))
+# add cell number and gene expression quantiles for each ETP
+power <- power %>% 
+  mutate(cells_quant = cut(num_cells, breaks = quantile(num_cells), include.lowest = TRUE)) %>% 
+  mutate(expr_quant = cut(expression_mean, breaks = quantile(expression_mean, probs = seq(0, 1, 0.1)),
+                          include.lowest = TRUE))
+
+
+# compute average transcripts per expression quantile
+avg_expr_quants <- power %>% 
+  group_by(expr_quant) %>% 
+  summarize(mean_expr = mean(expression_mean))
+
+# compute average power and expression per quantile
+binned_power <- power %>%
+  group_by(effect_size, cells_quant, expr_quant) %>% 
+  summarize(mean_power = mean(power), .groups = "drop") %>% 
+  left_join(avg_expr_quants, by = "expr_quant")
+
+binned_power <- binned_power %>%
+  dplyr::mutate(
+    effect_size_q = cut(
+      effect_size,
+      breaks = quantile(effect_size, probs = seq(0, 1, length.out = 6), na.rm = TRUE),
+      include.lowest = TRUE
+    )
+  )
+
+# plot binned power
+ggplot(
+  binned_power,
+  aes(x = mean_expr, y = mean_power, color = effect_size_q, group = effect_size_q)
+) +
+  geom_hline(yintercept = 0.8, lty = "dashed") +
+  geom_line() +
+  geom_point() +
+  scale_x_log10() +
+  theme_bw() +
+  theme(text = element_text(size = 13)) +
+  facet_wrap(~ cells_quant + effect_size_q) +
+  labs(
+    title = "Power vs. gene expression",
+    x = "Average UMI/cell per gene\n(binned in deciles)",
+    y = "Power",
+    color = "Effect size\n(quantiles)"
+  )
+```
+

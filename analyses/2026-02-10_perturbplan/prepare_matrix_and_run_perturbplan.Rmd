@@ -1,0 +1,147 @@
+---
+title: "DC-TAP Endothelial differentiation analysis - perturbplan"
+author: "Eugenio Mattei"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: flatly
+    highlight: tango
+params:
+  selected_day: 0
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(here)
+library(MuData)
+library(sceptre)
+library(dplyr)
+library(tibble)
+library(methods)
+library(SummarizedExperiment)
+library(MultiAssayExperiment)
+
+options(scipen = 999)
+
+selected_day <- params$selected_day
+source(here("scripts", "R", "utils.R"))
+
+# ---- Paths ----
+analysis_dirname <- "2026-02-10_perturbplan"
+output_folder <- here("results", analysis_dirname, paste0("day", selected_day))
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+
+sceptre_object_path <- here(
+  "results",
+  "2026-01-22_create_sceptre_object_and_qc",
+  paste0("day", selected_day, "_grna3"),
+  "sceptre_object.rds"
+)
+
+output_path <- here(output_folder, "mudata.h5mu")
+
+# Load sceptre object
+sceptre_object <- readRDS(sceptre_object_path)
+
+cells_in_use <- sceptre_object@cells_in_use
+if (length(cells_in_use) == 0) {
+    cells_in_use <- 1:ncol(sceptre_object@response_matrix)
+}
+response_matrix <- sceptre_object@response_matrix[[1]][, cells_in_use]
+grna_matrix <- sceptre_object@grna_matrix[[1]][, cells_in_use]
+grna_assignment_matrix <- methods::as(sceptre::get_grna_assignments(sceptre_object), 
+    "dsparseMatrix")
+if (!is.null(grna_assignment_matrix)) {
+    grna_assignment_matrix <- grna_assignment_matrix[, cells_in_use]
+}
+covariate_df <- sceptre_object@covariate_data_frame[cells_in_use, 
+    ]
+grna_target_data_frame <- sceptre_object@grna_target_data_frame
+grna_target_data_frame <- grna_target_data_frame[!duplicated(grna_target_data_frame$grna_id),]
+
+grna_assignment_matrix = grna_assignment_matrix[!duplicated(sceptre_object@grna_target_data_frame$grna_id),]
+grna_matrix = grna_matrix[rownames(grna_assignment_matrix),]
+
+positive_control_pairs <- sceptre_object@positive_control_pairs
+discovery_pairs <- sceptre_object@discovery_pairs
+moi <- if (sceptre_object@low_moi) "low" else "high"
+gene_names <- rownames(sceptre_object@response_matrix[[1]])
+sample_df <- dplyr::select(covariate_df, -dplyr::any_of(c("grna_n_nonzero", 
+    "grna_n_umis", "response_n_nonzero", "response_n_umis", 
+    "response_p_mito")))
+grna_ids <- rownames(grna_matrix)
+grna_rowdata <- dplyr::rename(dplyr::relocate(dplyr::mutate(tibble::column_to_rownames(dplyr::arrange(grna_target_data_frame, 
+    match(grna_id, grna_ids)), var = "grna_id"), targeting = ifelse(grna_target != 
+    "non-targeting", "TRUE", "FALSE")), targeting), intended_target_name = grna_target)
+if ("chr" %in% colnames(grna_rowdata)) {
+    grna_rowdata <- dplyr::rename(dplyr::mutate(grna_rowdata, 
+        chr = ifelse(is.na(chr), "", chr)), intended_target_chr = chr)
+}
+if ("start" %in% colnames(grna_rowdata)) {
+    grna_rowdata <- dplyr::rename(dplyr::mutate(grna_rowdata, 
+        start = ifelse(is.na(start), -9, start)), intended_target_start = start)
+}
+if ("end" %in% colnames(grna_rowdata)) {
+    grna_rowdata <- dplyr::rename(dplyr::mutate(grna_rowdata, 
+        end = ifelse(is.na(end), -9, end)), intended_target_end = end)
+}
+if ("grna_group" %in% colnames(grna_rowdata)) {
+    grna_rowdata <- dplyr::select(grna_rowdata, -grna_group)
+}
+grna_coldata <- dplyr::rename(dplyr::select(covariate_df, 
+    grna_n_nonzero, grna_n_umis), num_expressed_guides = grna_n_nonzero, 
+    total_guide_umis = grna_n_umis)
+gene_coldata <- dplyr::rename(dplyr::select(covariate_df, 
+    response_n_nonzero, response_n_umis), num_expressed_genes = response_n_nonzero, 
+    total_gene_umis = response_n_umis)
+response_matrix <- methods::as(response_matrix, "CsparseMatrix")
+grna_matrix <- methods::as(grna_matrix, "CsparseMatrix")
+if (!is.null(colnames(response_matrix))) {
+    cell_ids <- colnames(response_matrix)
+} else if (!is.null(colnames(grna_matrix))) {
+    cell_ids <- colnames(grna_matrix)
+} else if (!is.null(rownames(covariate_df))) {
+    cell_ids <- rownames(covariate_df)
+} else {
+    cell_ids <- paste0("cell_", 1:ncol(response_matrix))
+}
+colnames(response_matrix) <- cell_ids
+colnames(grna_matrix) <- cell_ids
+rownames(sample_df) <- cell_ids
+if (!is.null(grna_assignment_matrix)) {
+    colnames(grna_assignment_matrix) <- cell_ids
+}
+pairs <- rbind(dplyr::mutate(positive_control_pairs, pair_type = "positive_control"), 
+    dplyr::mutate(discovery_pairs, pair_type = "discovery"))
+metadata <- list()
+metadata[["pairs_to_test"]] <- MultiAssayExperiment::DataFrame(dplyr::rename(dplyr::select(pairs, 
+    grna_target, response_id, pair_type), intended_target_name = grna_target, 
+    gene_id = response_id))
+metadata[["test_results"]] <- MultiAssayExperiment::DataFrame(dplyr::rename(dplyr::left_join(dplyr::select(pairs, 
+    grna_target, response_id, pair_type), rbind(dplyr::select(sceptre_object@power_result, 
+    grna_target, response_id, p_value, log_2_fold_change), 
+    dplyr::select(sceptre_object@discovery_result, grna_target, 
+        response_id, p_value, log_2_fold_change)), by = c("grna_target", 
+    "response_id")), intended_target_name = grna_target, 
+    gene_id = response_id, log2_fc = log_2_fold_change))
+gene_se <- SummarizedExperiment::SummarizedExperiment(assays = list(counts = response_matrix), 
+    colData = gene_coldata, )
+grna_assays <- list(counts = grna_matrix)
+if (!is.null(grna_assignment_matrix)) {
+    grna_assays[["guide_assignment"]] <- grna_assignment_matrix
+}
+grna_se <- SummarizedExperiment::SummarizedExperiment(assays = grna_assays, 
+    rowData = grna_rowdata, colData = grna_coldata, metadata = list(moi = moi))
+mae <- MultiAssayExperiment::MultiAssayExperiment(experiments = list(gene = gene_se, 
+    guide = grna_se), colData = sample_df, metadata = metadata)
+
+
+MuData::writeH5MU(mae, file = output_path)
+```
+
+
+
