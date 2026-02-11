@@ -1,0 +1,214 @@
+---
+title: "DC-TAP Endothelial differentiation analysis - gRNA threhold"
+author: "Eugenio Mattei"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: flatly
+    highlight: tango
+---
+```{r}
+library(dplyr)
+library(here)
+library(ggplot2)
+library(ggExtra)
+library(purrr)
+library(readr)
+library(tibble)
+
+# Path to this Rmd while knitting
+this_rmd <- knitr::current_input()
+
+# Analysis folder name
+analysis_dirname <- "2026-02-10_find_best_grna_umi_threshold"
+
+# Parameterized results folder
+output_folder <- here(
+  "results",
+  analysis_dirname
+)
+
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+output_folder
+
+thresholds <- c(3,10,20,40,100,200)
+
+```
+
+```{r}
+# Load sceptre object
+sceptre_object_path = here("results", "2026-01-22_create_sceptre_object_and_qc","day0_grna3", "sceptre_object.rds")
+
+sceptre_object = readRDS(sceptre_object_path)
+sceptre_object
+
+mean_gene_umi = Matrix::rowMeans(sceptre_object@response_matrix[[1]][,sceptre_object@cells_in_use])
+gene_umi_df <- tibble(
+  response_id = names(mean_gene_umi),        # gene IDs = rownames(resp)
+  mean_umi = as.numeric(mean_gene_umi)
+)
+gene_umi_df
+```
+
+
+```{r}
+power_all <- purrr::map_dfr(thresholds, \(thr) {
+  path <- here(output_folder, paste0("sceptre_power_check_results_day0_thr", thr, ".csv"))
+  readr::read_csv(path, show_col_types = FALSE) %>%
+    mutate(threshold = factor(thr))
+}) %>%
+  left_join(gene_umi_df, by = "response_id")
+
+power_all <- power_all %>%
+  mutate(
+    effect_size = (fold_change - 1) * 100,
+    fdr = p.adjust(p_value, method = "fdr")
+  )
+
+power_all <- power_all %>%
+  mutate(
+    pair_id = paste0(grna_target,"_",response_id)
+  )
+
+power_all
+
+```
+
+
+```{r}
+table(power_all$fdr<=0.1, power_all$threshold)
+```
+```{r}
+# genes that actually appear in the results
+genes_in_results <- unique(power_all$response_id)
+
+# restrict gene_umi_df to only those genes
+gene_umi_sub <- gene_umi_df %>%
+  dplyr::filter(response_id %in% genes_in_results)
+
+gene_bins <- gene_umi_sub %>%
+  dplyr::mutate(
+    umi_bin_id = cut(
+      mean_umi,
+      breaks = quantile(mean_umi, probs = seq(0, 1, 0.1), na.rm = TRUE),
+      include.lowest = TRUE
+    )
+  )
+
+power_all <- power_all %>%
+  dplyr::left_join(
+    gene_bins %>% dplyr::select(response_id, mean_umi, umi_bin_id),
+    by = "response_id"
+  )
+
+# sanity check
+stopifnot("umi_bin_id" %in% colnames(power_all))
+
+bin_levels <- gene_bins %>%
+  dplyr::group_by(umi_bin_id) %>%
+  dplyr::summarise(bin_mean_umi = mean(mean_umi), .groups = "drop") %>%
+  dplyr::arrange(bin_mean_umi)
+
+power_all <- power_all %>%
+  dplyr::mutate(
+    umi_bin = factor(
+      umi_bin_id,
+      levels = bin_levels$umi_bin_id,
+      labels = sprintf("%.3g", bin_levels$bin_mean_umi)
+    )
+  )
+
+stopifnot(!any(is.na(power_all$umi_bin)))
+
+bin_counts <- power_all %>%
+  dplyr::group_by(umi_bin) %>%
+  dplyr::summarise(
+    n_pairs = dplyr::n_distinct(pair_id),
+    n_genes = dplyr::n_distinct(response_id),
+    .groups = "drop"
+  )
+
+# one global y-position for all labels
+y_pos_global <- max(power_all$effect_size, na.rm = TRUE) * 1.05
+
+bin_labels <- bin_counts %>%
+  dplyr::mutate(
+    label = paste0("pairs=", n_pairs),
+    y_pos = y_pos_global
+  )
+
+#palette_4_qual <- c("#D95F02", "#1B9E77", "#7570B3", "#E6AB02")
+
+ggplot(power_all, aes(x = umi_bin, y = effect_size, fill = threshold)) +
+  geom_boxplot(
+    outlier.alpha = 0.25,
+    position = position_dodge(width = 0.8)
+  ) +
+  geom_text(
+    data = bin_labels,
+    aes(x = umi_bin, y = y_pos, label = label),
+    inherit.aes = FALSE,
+    size = 5,
+    color = "black"
+  ) +
+  theme_bw(base_size = 14) +
+  theme(
+    text = element_text(size = 13),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    title = "Effect size vs mean gene UMI across thresholds",
+    x = "Mean UMI/cell per gene (UMI quantiles)",
+    y = "Effect size (% change)"
+  )
+
+ggsave(
+  filename = here(output_folder, "plots", "effect_size_promoter_multiple_thresholds.png"),
+  width = 13.33,
+  height = 7.5,
+  dpi=300,
+  )
+
+```
+
+```{r}
+power_all_plot <- power_all %>%
+  mutate(effect_size_plot = ifelse(is.nan(effect_size), -Inf, effect_size))
+
+order_stricter <- power_all_plot %>%
+  dplyr::filter(threshold == thresholds[length(thresholds)]) %>%
+  dplyr::arrange(desc(effect_size)) %>%
+  dplyr::pull(pair_id)
+
+power_all_sorted <- power_all_plot %>%
+  dplyr::mutate(
+    pair_id = factor(pair_id, levels = order_stricter)
+  )
+
+ggplot(power_all_sorted, aes(x = pair_id, y = effect_size, color = threshold)) +
+  geom_point() + 
+  labs(
+    title = "Effect size for each tested pair at different thresholds",
+    subtitle = "n = 270",
+    x = "Unique pair (element, gene)",
+    y = "Effect size (% change)"
+  ) +
+  theme_classic(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+ggsave(
+  filename = here(output_folder, "plots", "effect_size_promoter_multiple_thresholds_points.png"),
+  width = 13.3,
+  height = 7.5,
+  dpi=300,
+  )
+```
+
