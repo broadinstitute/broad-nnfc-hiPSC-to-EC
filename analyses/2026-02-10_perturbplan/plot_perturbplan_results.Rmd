@@ -49,12 +49,14 @@ perturb_results
 ```
 
 ```{r}
+# Load perturbplan results
 perturbplan_power = perturb_results@metadata$power_results$individual_power
 names(perturbplan_power)
 ```
 
 
 ```{r}
+# Load sceptre results
 test_results = as.data.frame(perturb_results@metadata$test_results)
 test_results$effect_size = (2^test_results$log2_fc -1) *100
 test_results$fdr = p.adjust(test_results$p_value, method = "fdr")
@@ -62,44 +64,42 @@ test_results$pair_name = paste0(test_results$intended_target_name,"_",test_resul
 head(test_results)
 ```
 
-
 ```{r}
+# Merge in one dataframe for plotting
 power_temp = as.data.frame(perturbplan_power)
 rownames(power_temp) = paste0(power_temp$grna_target,"_",power_temp$response_id)
 
 power = cbind(test_results,power_temp[test_results$pair_name,])
+
 power <- dplyr::filter(power, !is.na(effect_size))
-# add cell number and gene expression quantiles for each ETP
+head(power)
+```
+
+
+```{r}
+
+# Create decentiles for mean expression, and quantiles for number of cells
 power <- power %>% 
   mutate(cells_quant = cut(num_cells, breaks = quantile(num_cells), include.lowest = TRUE)) %>% 
   mutate(expr_quant = cut(expression_mean, breaks = quantile(expression_mean, probs = seq(0, 1, 0.1)),
                           include.lowest = TRUE))
 
 
-# compute average transcripts per expression quantile
+# Compute average transcripts per expression quantile
 avg_expr_quants <- power %>% 
   group_by(expr_quant) %>% 
   summarize(mean_expr = mean(expression_mean))
 
-# compute average power and expression per quantile
+# Compute average power and expression per quantile
 binned_power <- power %>%
   group_by(effect_size, cells_quant, expr_quant) %>% 
   summarize(mean_power = mean(power), .groups = "drop") %>% 
   left_join(avg_expr_quants, by = "expr_quant")
 
-binned_power <- binned_power %>%
-  dplyr::mutate(
-    effect_size_q = cut(
-      effect_size,
-      breaks = quantile(effect_size, probs = seq(0, 1, length.out = 6), na.rm = TRUE),
-      include.lowest = TRUE
-    )
-  )
-
 # plot binned power
 ggplot(
   binned_power,
-  aes(x = mean_expr, y = mean_power, color = effect_size_q, group = effect_size_q)
+  aes(x = mean_expr, y = mean_power, color = effect_size, group = effect_size)
 ) +
   geom_hline(yintercept = 0.8, lty = "dashed") +
   geom_line() +
@@ -107,12 +107,30 @@ ggplot(
   scale_x_log10() +
   theme_bw() +
   theme(text = element_text(size = 13)) +
-  facet_wrap(~ cells_quant + effect_size_q) +
   labs(
     title = "Power vs. gene expression",
     x = "Average UMI/cell per gene\n(binned in deciles)",
     y = "Power",
     color = "Effect size\n(quantiles)"
   )
+```
+
+
+```{r}
+ggplot(binned_power,
+       aes(x = mean_expr, y = mean_power)) +
+  geom_hline(yintercept = 0.8, lty = "dashed") +
+  geom_line(aes(linetype = cells_quant)) +
+  geom_point(aes( color = effect_size)) +
+  labs(
+    title = "Power vs. gene expression", 
+    x = "Average UMI/cell per gene\n(binned in decentiles)",
+    y = "Power", 
+    linetype = "Pert. cells", 
+    color = "Effect size"
+    ) +
+  scale_x_log10() +
+  theme_bw() +
+  theme(text = element_text(size = 13))
 ```
 
