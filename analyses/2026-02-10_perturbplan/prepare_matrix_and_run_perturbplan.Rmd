@@ -38,11 +38,11 @@ dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
 sceptre_object_path <- here(
   "results",
   "2026-01-22_create_sceptre_object_and_qc",
-  paste0("day", selected_day, "_grna3"),
+  paste0("day", selected_day, "_grna20"),
   "sceptre_object.rds"
 )
 
-output_path <- here(output_folder, "mudata.h5mu")
+output_path <- here(output_folder, paste0("day", selected_day, "_grna20_mudata.h5mu"))
 
 # Load sceptre object
 sceptre_object <- readRDS(sceptre_object_path)

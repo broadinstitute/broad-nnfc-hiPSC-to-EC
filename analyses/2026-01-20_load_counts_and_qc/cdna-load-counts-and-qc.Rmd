@@ -158,19 +158,18 @@ data
 ```{r}
 # Merge the samples metadata into Seurat
 ids <- Cells(data)
-sample_id <- sub("_sample_.*$", "", basename(ids))
-
+sample_id <- data@active.ident
 
 meta <- metadata_samples_df
 meta$sample_id <- meta$entity.endothelial_id
 meta <- meta[!duplicated(meta$sample_id), , drop = FALSE]
 
-idx <- match(sample_id, meta$sample_id)
+idx <- match(sample_id, meta$entity.endothelial_id)
 
 meta_for_seurat <- meta[idx, , drop = FALSE]
 meta_for_seurat$sample_id <- NULL
-rownames(meta_for_seurat) <- ids
 
+rownames(meta_for_seurat) <- ids
 
 data <- AddMetaData(data, metadata = meta_for_seurat)
 ```

@@ -10,8 +10,8 @@ output:
     theme: flatly
     highlight: tango
 params:
-  selected_day: 4
-  grna_threshold: 3
+  selected_day: 0
+  grna_threshold: 20
   threads: 8
 ---
 
@@ -63,7 +63,7 @@ source(here("scripts", "R", "utils.R"))
 
 ```{r}
 # INPUTS
-metadata_samples_fnp <- here("metadata", "metadata_sample_full.tsv")
+metadata_samples_fnp <- here("metadata", "metadata_sample_full.fixed.tsv")
 metadata_genes_fnp   <- here("metadata", "metadata_genes_final.csv")
 ```
 
@@ -100,6 +100,17 @@ cdna_rds_filename <- paste0("cdna_seurat_filtered_", selected_day, ".rds")
 cdns_rds_fnp <- file.path(cdna_rds_folder, cdna_rds_filename)
 
 seurat_object <- readRDS(cdns_rds_fnp)
+```
+
+## Create the covariates dataframe for SCEPTRE
+
+```{r}
+covariates_to_keep = c(
+  "batch",
+  "replicate_factor"
+)
+extra_covariates = seurat_object@meta.data[,covariates_to_keep]
+extra_covariates
 ```
 
 ## Merge into one count matrix
@@ -193,7 +204,7 @@ SCEPTRE required as inputs:
 ```{r}
 metadata_samples_fnp <- here(
   "metadata",
-  "metadata_sample_endothelial_terra.tsv"
+  "metadata_sample_full.fixed.tsv"
 )
 
 metadata_genes_fnp <- here(
@@ -454,17 +465,17 @@ print(p)
 
 save_both(p, output_folder, paste0("fraction_of_cells_with_guide_by_replicate", selected_day))
 ```
-
-
 ## Create the SCEPTRE object
 
 ```{r}
 # Create the initial SCEPTRE object
+mask_grnas_with_guide_umis = Matrix::colSums(guide_umi_mat) > 0
 sceptre_object = sceptre::import_data(
-  response_matrix = counts_umi_mat[unique(metadata_genes_df$intended_target_gene_symbol),,drop=FALSE],
-  grna_matrix = guide_umi_mat,
+  response_matrix = counts_umi_mat[unique(metadata_genes_df$intended_target_gene_symbol), mask_grnas_with_guide_umis,drop=FALSE],
+  grna_matrix = guide_umi_mat[, mask_grnas_with_guide_umis],
   grna_target_data_frame = guide_element_map_sceptre[,c(1,2)],
   moi = "high",
+  extra_covariates = extra_covariates[mask_grnas_with_guide_umis, ]
 )
 print(sceptre_object)
 
@@ -488,11 +499,26 @@ print(sceptre_object)
 ```{r}
 plot_grna_count_distributions(sceptre_object)
 # Assign gRNAs to cells using `thresholding` method and 10 UMIs threshold
+#sceptre_object <- assign_grnas(
+#  sceptre_object = sceptre_object,
+#  parallel = TRUE,
+#  method = "thresholding",
+#  threshold = assign_grna_threshold,
+#  n_processors = n_processors
+#)
+
+formula_object <- formula(~ log(response_n_nonzero) + 
+                            log(response_n_umis) +
+                            log(grna_n_nonzero) + 
+                            log(grna_n_umis) + 
+                            replicate_factor + 
+                            batch
+                          )
+
 sceptre_object <- assign_grnas(
   sceptre_object = sceptre_object,
+  formula_object = formula_object,
   parallel = TRUE,
-  method = "thresholding",
-  threshold = assign_grna_threshold,
   n_processors = n_processors
 )
 

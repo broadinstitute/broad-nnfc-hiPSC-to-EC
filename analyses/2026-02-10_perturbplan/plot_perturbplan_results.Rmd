@@ -16,12 +16,13 @@ editor_options:
 ---
 
 ```{r}
+library(dplyr)
+library(ggplot2)
 library(here)
+library(methods)
 library(MuData)
 library(sceptre)
-library(dplyr)
 library(tibble)
-library(methods)
 library(SummarizedExperiment)
 library(MultiAssayExperiment)
 
@@ -37,7 +38,7 @@ dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
 
 perturbplan_object_path <- here(
   output_folder,
-  "perturbplan_es_15_pval_0.1_both.h5mu"
+  "perturbplan_es_15_pval_0.001_both.h5mu"
 )
 ```
 
@@ -130,6 +131,7 @@ ggplot(binned_power,
     color = "Effect size"
     ) +
   scale_x_log10() +
+  facet_grid(.~cells_quant) +
   theme_bw() +
   theme(text = element_text(size = 13))
 ```
