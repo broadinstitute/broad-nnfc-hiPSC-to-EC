@@ -110,6 +110,7 @@ covariates_to_keep = c(
   "replicate_factor"
 )
 extra_covariates = seurat_object@meta.data[,covariates_to_keep]
+extra_covariates$batch = as.factor(extra_covariates$batch)
 extra_covariates
 ```
 
