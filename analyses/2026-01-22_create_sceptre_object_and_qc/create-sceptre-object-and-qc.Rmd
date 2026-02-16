@@ -106,11 +106,11 @@ seurat_object <- readRDS(cdns_rds_fnp)
 
 ```{r}
 covariates_to_keep = c(
-  "batch",
+  "batch_factor",
   "replicate_factor"
 )
 extra_covariates = seurat_object@meta.data[,covariates_to_keep]
-extra_covariates$batch = as.factor(extra_covariates$batch)
+#extra_covariates$batch = as.factor(extra_covariates$batch)
 extra_covariates
 ```
 
@@ -484,13 +484,23 @@ print(sceptre_object)
 all(unique(c(discovery_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
 all(unique(c(positive_pairs_sceptre$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
 
+formula_object <- formula(~ log(response_n_nonzero) + 
+                            log(response_n_umis) +
+                            log(grna_n_nonzero) + 
+                            log(grna_n_umis) + 
+                            replicate_factor + 
+                            batch_factor
+                          )
 
 # Set the analysis parameters
 sceptre_object <- set_analysis_parameters(
   sceptre_object = sceptre_object,
   discovery_pairs = discovery_pairs[,c(1,2)],
   positive_control_pairs = positive_pairs_sceptre[,c(1,2)],
-  side = "both"
+  side = "both",
+  resampling_approximation = "no_approximation",
+  resampling_mechanism = "permutations",
+  formula_object = formula_object
 )
 print(sceptre_object)
 ```
@@ -499,29 +509,21 @@ print(sceptre_object)
 
 ```{r}
 plot_grna_count_distributions(sceptre_object)
-# Assign gRNAs to cells using `thresholding` method and 10 UMIs threshold
-#sceptre_object <- assign_grnas(
-#  sceptre_object = sceptre_object,
-#  parallel = TRUE,
-#  method = "thresholding",
-#  threshold = assign_grna_threshold,
-#  n_processors = n_processors
-#)
-
-formula_object <- formula(~ log(response_n_nonzero) + 
-                            log(response_n_umis) +
-                            log(grna_n_nonzero) + 
-                            log(grna_n_umis) + 
-                            replicate_factor + 
-                            batch
-                          )
-
+# Assign gRNAs to cells using `thresholding` method
 sceptre_object <- assign_grnas(
   sceptre_object = sceptre_object,
-  formula_object = formula_object,
   parallel = TRUE,
+  method = "thresholding",
+  threshold = assign_grna_threshold,
   n_processors = n_processors
 )
+
+#sceptre_object <- assign_grnas(
+#  sceptre_object = sceptre_object,
+#  formula_object = formula_object,
+#  parallel = TRUE,
+#  n_processors = n_processors
+#)
 
 plot(sceptre_object)
 ```
@@ -529,7 +531,12 @@ plot(sceptre_object)
 ## Quality control
 
 ```{r}
-sceptre_object <- run_qc(sceptre_object,)
+sceptre_object <- run_qc(
+  sceptre_object,
+  n_nonzero_trt_thresh = 15L,
+  n_nonzero_cntrl_thresh = 15L,
+  response_n_umis_range = c(0.05, 0.95)
+  )
 plot(sceptre_object)
 
 # compute the number of cells per element
