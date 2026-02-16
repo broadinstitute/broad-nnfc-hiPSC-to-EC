@@ -201,6 +201,16 @@ data$replicate_factor = factor(
     labels = c("Rep 1", "Rep 2", "Rep 3", "Rep 4")
 )
 
+data$batch_factor = factor(
+    meta_for_seurat$batch, 
+    
+    # The actual values in the data (the numeric levels)
+    levels = 1:4, 
+    
+    # The new labels to assign to those levels (the string names)
+    labels = c("Batch 1", "Batch 2", "Batch 3", "Batch 4")
+)
+
 data$day_factor = factor(
     meta_for_seurat$day, 
     
@@ -300,9 +310,10 @@ save_both(p, output_folder, paste0("total_umi_vs_target_genes_umis_percent_ribo_
 message("Keeping cells with percent_target_umis >= ", target_umi_threshold, 
         ", nCount_RNA >= ", umi_threshold,
         " and percent.ribo >= ", ribo_threshold, "\n")
+
 data_filtered = subset(data, 
-                       subset = percent_target_umis >= target_umi_threshold & nCount_RNA >= umi_threshold & percent.ribo >= ribo_threshold
-                       )
+                       subset = percent_target_umis >= target_umi_threshold & nCount_RNA >= umi_threshold & percent.ribo >= ribo_threshold)
+
 data_filtered
 message("Number of cells before filtering: ", ncol(data), "\n")
 message("Number of cells filtered out: ", ncol(data) - ncol(data_filtered), "\n")
