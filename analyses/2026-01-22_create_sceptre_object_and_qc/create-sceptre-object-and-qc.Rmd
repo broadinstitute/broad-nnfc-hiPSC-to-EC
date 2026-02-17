@@ -498,8 +498,8 @@ sceptre_object <- set_analysis_parameters(
   discovery_pairs = discovery_pairs[,c(1,2)],
   positive_control_pairs = positive_pairs_sceptre[,c(1,2)],
   side = "both",
-  resampling_approximation = "no_approximation",
-  resampling_mechanism = "permutations",
+  #resampling_approximation = "no_approximation",
+  #resampling_mechanism = "permutations",
   formula_object = formula_object
 )
 print(sceptre_object)
