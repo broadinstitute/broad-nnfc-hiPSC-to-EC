@@ -1,0 +1,207 @@
+---
+title: "DC-TAP Endothelial differentiation analysis - sceptre results"
+author: "Eugenio Mattei"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: flatly
+    highlight: tango
+params:
+  selected_day: 0
+  threads: 8
+---
+
+```{r}
+library(here)
+
+# Path to this Rmd while knitting
+this_rmd <- knitr::current_input()
+
+# Analysis folder name
+analysis_dirname <- "2026-02-12_post_sceptre_analysis"
+
+# Parameterized results folder
+output_folder <- here(
+  "results",
+  analysis_dirname,
+  paste0(
+    "day", params$selected_day
+  )
+)
+
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+output_folder
+```
+
+```{r}
+library(ggplot2)
+library(ggExtra)
+library(dplyr)
+
+tss_fnp <- here("annotations", "gencode_tss.bed")
+tss_df <- read.csv(tss_fnp, sep = "\t", header = FALSE)
+colnames(tss_df) <- c("chromosome", "tss_start", "tss_end", "gene_name", "score", "strand", "gene_id", "gene_type", "gene_symbol")
+head(tss_df)
+
+# Remove version numbers from gene_id
+tss_df$gene_id_no_version <- gsub("\\..*$", "", tss_df$gene_id)
+
+genes_metadata_fnp = here("metadata", "metadata_genes_final.csv")
+genes_metadata <- read.csv(genes_metadata_fnp, sep = ",", header = TRUE)
+
+selected_day = params$selected_day
+
+save_ggplot <- function(plot, filename, width = 8, height = 6, dpi = 300) {
+  ggsave(
+    filename = filename,
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = dpi
+  )
+}
+
+```
+
+# Create gene symbol to Ensembl ID mapping
+```{r}
+genes_metadata$gene_id_no_version = sub("\\.\\d+$", "", genes_metadata$intended_target_gene_id)
+# Create a mapping data.frame
+gene_map <- data.frame(
+  symbol = genes_metadata$intended_target_gene_symbol,
+  ensembl = genes_metadata$gene_id_no_version,
+  stringsAsFactors = FALSE
+)
+head(gene_map)
+```
+
+# Load SCEPTRE results
+```{r}
+# Load SCEPTRE discovery results for the selected day
+discovery_fnp = here(
+  "results", 
+  "2026-01-22_create_sceptre_object_and_qc", 
+  paste0("day",selected_day,"_grna20"), 
+  "sceptre_discovery_results.csv"
+  )
+
+discovery <- read.csv(discovery_fnp, header = TRUE)
+
+# Remove the pairs that didn't pass QC
+discovery <- discovery[!is.na(discovery$p_value), ]
+
+# Compute percent effect size
+discovery$pct_effect_size <- (discovery$fold_change - 1) * 100
+
+# Add three columns target_chr, target_start, target_end from grna_target(chr4:145463887-145463991)
+grna_target_split <- do.call(rbind, strsplit(as.character(discovery$grna_target), "[:-]"))
+discovery$target_chr <- grna_target_split[,1]
+discovery$target_start <- as.numeric(grna_target_split[,2])
+discovery$target_end <- as.numeric(grna_target_split[,3])
+# Merge with gene map to get ENSEMBL ids for the genes
+discovery <- merge(discovery, gene_map, by.x = "response_id", by.y = "symbol", all.x = TRUE)
+head(discovery)
+
+dim(discovery)
+table(discovery$significant)
+```
+
+
+```{r}
+# Filter TSS, keep genes in discovery results
+tss_filtered <- tss_df[tss_df$gene_id_no_version %in% discovery$ensembl, ]
+tss_filtered <- tss_filtered[!duplicated(tss_filtered$gene_symbol), ]
+head(tss_filtered)
+
+
+# Compute distance from response gene TSS to grna target
+# 0) Keep an id to collapse back after expanding to all TSS rows
+discovery <- discovery %>% mutate(.id = row_number())
+
+# 1) (Optional but recommended) normalize chromosome naming so they match
+tss_filtered2 <- tss_filtered %>%
+  filter(gene_id_no_version %in% discovery$ensembl) %>%
+  mutate(chromosome = if_else(grepl("^chr", chromosome), chromosome, paste0("chr", chromosome)))
+
+discovery2 <- discovery %>%
+  mutate(target_chr = if_else(grepl("^chr", target_chr), target_chr, paste0("chr", target_chr)))
+
+# 2) Expand: join each discovery row to ALL its TSS for that gene
+dx <- discovery2 %>%
+  select(.id, ensembl, target_chr, target_start, target_end) %>%
+  inner_join(
+    tss_filtered2 %>% select(gene_id_no_version, chromosome, tss_start, tss_end),
+    by = c("ensembl" = "gene_id_no_version")
+  ) %>%
+  # keep same-chromosome TSS only (drop cross-chromosome)
+  filter(target_chr == chromosome) %>%
+  # 3) Per-pair distance (0 if overlap)
+  mutate(distance_pair = pmax(0L, tss_start - target_end, target_start - tss_end))
+
+# 4) Take the MIN distance per discovery row; keep the TSS that achieved it
+nearest <- dx %>%
+  group_by(.id) %>%
+  slice_min(distance_pair, with_ties = FALSE) %>%
+  ungroup() %>%
+  transmute(
+    .id,
+    distance_to_tss = distance_pair,
+    nearest_tss_chr   = chromosome,
+    nearest_tss_start = tss_start,
+    nearest_tss_end   = tss_end
+  )
+
+# 5) Bring the result back onto the original discovery table
+discovery_min <- discovery %>%
+  left_join(nearest, by = ".id")
+
+# Peek
+discovery_min %>% select(grna_target, ensembl, distance_to_tss, nearest_tss_chr, nearest_tss_start, nearest_tss_end) %>% head()
+
+df <- discovery_min %>%
+  mutate(percent_change = pct_effect_size,
+         distance = abs(distance_to_tss)) %>%             # Use absolute distance
+  arrange(significant) %>% # Order by significance so these points appear on top of the insignificant points
+  mutate(effect_color = case_when(
+    significant == TRUE & percent_change > 0 ~ "Positive",
+    significant == TRUE & percent_change < 0 ~ "Negative",
+    TRUE ~ "Non-significant"
+  ))
+
+# Create the plot
+p <- ggplot(df, aes(x = distance / 1e6, y = percent_change, color = effect_color)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Dotted line at y = 0
+  scale_color_manual(values = c("Positive" = "blue", "Negative" = "red", "Non-significant" = "grey"),
+                     labels = c("Positive" = "Pos.", "Negative" = "Neg.", "Non-significant" = "Non-sig")) +
+  ylim(-100, 250) +
+  labs(title = paste0("Day ", selected_day," - Distance by Effect Size"),
+       subtitle = paste0("n = ", nrow(df), " pairs"),
+       x = "Distance to TSS (Mb)", 
+       y = "CRISPRi effect size \n(% change)", 
+       color = "CRISPR") +
+  theme_classic(base_size = 14) +  # Increase base font size
+  theme(
+    plot.title = element_text(vjust = -1, margin = margin(b = 10), size = 16),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    strip.background = element_blank(),
+    legend.position = "bottom"
+  )
+
+
+p <- ggMarginal(p, type = "density", margins = "both", groupColour = TRUE, groupFill = FALSE)
+
+p
+save_ggplot(
+  p,
+  here(output_folder, paste0("day", selected_day, "_distance_by_effect_size.png")), 
+  width = 10, 
+  height = 8
+  )
+```
+
+
