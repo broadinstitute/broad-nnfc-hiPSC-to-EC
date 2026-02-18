@@ -1,12 +1,27 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "altair>=6.0.0",
+#     "marimo>=0.19.10",
+#     "matplotlib>=3.10.8",
+#     "networkx>=3.6.1",
+#     "pandas>=3.0.0",
+#     "pyvis>=0.3.2",
+#     "pyzmq>=27.1.0",
+#     "statsmodels>=0.14.6",
+# ]
+# ///
+
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.11"
 app = marimo.App(width="full")
 
 
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
@@ -28,6 +43,7 @@ def _():
 
     def fmt_float(x):
         return "—" if pd.isna(x) else f"{x:.2f}"
+
     return Network, Path, alt, datetime, fmt_float, fmt_int, multipletests, pd
 
 
@@ -35,11 +51,11 @@ def _():
 def _(datetime, fmt_float, fmt_int, mo, results_flt, summary):
     _left = mo.md(
         f"""
-    **Date:** {datetime.strptime("2025/12/09", "%Y/%m/%d").strftime("%B %d, %Y")}  
+    **Date:** {datetime.now().strftime("%B %d, %Y")}  
     **Project:** hiPSC -> EC differentiaton    
     **Timepoints:** 3
     """
-    )
+     )
 
     _right = mo.md(
         f"""
@@ -47,14 +63,66 @@ def _(datetime, fmt_float, fmt_int, mo, results_flt, summary):
     **Total significant pairs:** {fmt_int(results_flt["significant"].value_counts().get(True, 0))}  
     **Tested genes:** {fmt_int(results_flt["response_id"].nunique())}  
     """
-    ).right()
+     ).right()
 
     _header = mo.md(
         f"""
     ## Results Overview
     {mo.hstack([_left, _right], widths="equal")}
     """
-    )
+     )
+
+    def _reg_stats_by_day(day):
+        day_sig = results_flt.loc[
+            (results_flt["day"].astype(str) == str(day)) & (results_flt["significant"]),
+            ["response_id", "grna_target"],
+        ].drop_duplicates()
+
+        pairs_per_gene = (
+            day_sig.groupby("response_id").size()
+            .sort_values(ascending=False)
+            .reset_index(name="n_pairs")
+        )
+
+        genes_per_element = (
+            day_sig.groupby("grna_target")["response_id"].nunique()
+            .sort_values(ascending=False)
+            .reset_index(name="n_genes")
+        )
+
+        mean_pairs_per_gene = (
+            pairs_per_gene["n_pairs"].mean() if pairs_per_gene.shape[0] else 0.0
+        )
+        mean_genes_per_element = (
+            genes_per_element["n_genes"].mean() if genes_per_element.shape[0] else 0.0
+        )
+
+        reg_stats = mo.hstack(
+            [
+                mo.stat(
+                    label=f"Day {day} · Regulated genes (≥1 significant pair)",
+                    value=fmt_int(pairs_per_gene.shape[0]),
+                    bordered=True,
+                ).style(min_width="240px"),
+                mo.stat(
+                    label=f"Day {day} · Mean significant pairs per gene",
+                    value=fmt_float(mean_pairs_per_gene),
+                    bordered=True,
+                ).style(min_width="240px"),
+                mo.stat(
+                    label=f"Day {day} · Elements with ≥1 significant gene",
+                    value=fmt_int(genes_per_element.shape[0]),
+                    bordered=True,
+                ).style(min_width="240px"),
+                mo.stat(
+                    label=f"Day {day} · Mean significant genes per element",
+                    value=fmt_float(mean_genes_per_element),
+                    bordered=True,
+                ).style(min_width="240px"),
+            ]
+        )
+
+        return reg_stats
 
     rows = []
     # 
@@ -76,6 +144,8 @@ def _(datetime, fmt_float, fmt_int, mo, results_flt, summary):
                 #justify="space-around",
             )
         )
+
+        rows.append(_reg_stats_by_day(day))
 
         day_cards = [
 
@@ -458,13 +528,15 @@ def _(results_flt):
 @app.cell
 def _(Path, multipletests, np, pd):
     # Load the SCEPTRE results
-    base = Path("results/04-2025-10-27_sceptre_analysis/2025-11-13_sceptre_outputs")
+    base = Path("results/2026-01-22_create_sceptre_object_and_qc")
     days = ["0", "2", "4"]
+
+    output = Path("../../results/2026-02-12_post_sceptre_analysis")
 
     dfs = []
     for d in days:
         df = pd.read_csv(
-            base / f"day{d}" / "sceptre_outputs" / "sceptre_discovery_results.csv"
+            base / f"day{d}_grna20" / "sceptre_discovery_results.csv"
         )
         df["day"] = d
 

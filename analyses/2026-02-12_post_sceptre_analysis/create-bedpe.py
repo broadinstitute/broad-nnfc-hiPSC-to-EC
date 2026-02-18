@@ -136,7 +136,11 @@ def _(genomic_distance, regulatory_region_df, results_df, select_day):
         annotated_results["grna_target"].astype(str)
     )
 
-    annotated_results["score"] = 0
+    # Use the absolute value of the effect size as the score for the BEDPE file (since BEDPE score is typically used for visualization and we want to visualize both positive and negative effects)
+    annotated_results["score"] = annotated_results["effect_size"].abs()
+    # Normalize betwen 0 and 1 using the max absolute effect size per day
+    max_effect_size = annotated_results["effect_size"].abs().max()
+    annotated_results["score"] = annotated_results["score"] / max_effect_size
     annotated_results["strand1"] = "."
     annotated_results["strand2"] = "."
 
