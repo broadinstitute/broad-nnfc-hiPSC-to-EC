@@ -38,7 +38,11 @@ which g++
 g++ --version
 
 # Install other dependencies from binaries
-conda install pandas numpy cython meson-python ninja
+pip install hatchling hatch-vcs editables
+pip install --only-binary=:all: orbax-checkpoint optree ml-dtypes
+
+conda install numpy pkgconfig cython meson-python ninja scipy hdf5 h5py pyarrow contourpy==1.3.3 zstandard==0.25.0 pandas==2.3.3
+
 
 # At this point, you should be able to install alphagenome from source without
 pip install --no-build-isolation -e ./alphagenome_research
