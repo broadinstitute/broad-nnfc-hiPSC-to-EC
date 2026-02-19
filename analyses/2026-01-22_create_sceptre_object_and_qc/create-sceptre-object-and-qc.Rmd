@@ -466,23 +466,88 @@ print(p)
 
 save_both(p, output_folder, paste0("fraction_of_cells_with_guide_by_replicate", selected_day))
 ```
+
+```{r}
+# Inputs:
+# guide_umi_mat: matrix (rows = gRNA, cols = barcode)
+# guide_element_map_sceptre: data.frame
+grna_col <- "grna_id"   # <-- change to the column name in your df that has guide IDs
+
+guides_mat <- rownames(guide_umi_mat)
+guides_df  <- unique(as.character(guide_element_map_sceptre[[grna_col]]))
+
+missing_in_df <- setdiff(guides_mat, guides_df)
+extra_in_df   <- setdiff(guides_df, guides_mat)
+
+cat("Guides in matrix:", length(guides_mat), "\n")
+cat("Guides in dataframe:", length(guides_df), "\n")
+cat("Missing in dataframe (in matrix, not df):", length(missing_in_df), "\n")
+cat("Extra in dataframe (in df, not matrix):", length(extra_in_df), "\n")
+
+# identities
+if (length(missing_in_df) > 0) {
+  cat("\nMissing guide IDs (showing up to 50):\n")
+  print(head(missing_in_df, 50))
+}
+
+```
+```{r}
+common_guides <- intersect(guides_mat, guides_df)
+
+# New count matrix with common guides (same row order)
+guide_umi_mat2 <- guide_umi_mat[common_guides, , drop = FALSE]
+
+# New dataframe with only common guides
+df2 <- guide_element_map_sceptre[
+  as.character(guide_element_map_sceptre[[grna_col]]) %in% common_guides,
+  ,
+  drop = FALSE
+]
+
+# Reorder df2 to match matrix order (handles duplicate guides in df2)
+df2[[grna_col]] <- as.character(df2[[grna_col]])
+df2$.__ord <- match(df2[[grna_col]], common_guides)
+df2 <- df2[order(df2$.__ord), , drop = FALSE]
+df2$.__ord <- NULL
+
+# sanity checks
+stopifnot(identical(rownames(guide_umi_mat2), common_guides))
+stopifnot(all(unique(df2[[grna_col]]) %in% common_guides))
+
+cat("\nNew matrix dim: ", paste(dim(guide_umi_mat2), collapse=" x "), "\n")
+cat("New df rows: ", nrow(df2), " (unique guides: ", length(unique(df2[[grna_col]])), ")\n", sep="")
+
+```
+
+
+
 ## Create the SCEPTRE object
 
 ```{r}
 # Create the initial SCEPTRE object
-mask_grnas_with_guide_umis = Matrix::colSums(guide_umi_mat) > 0
+mask_barcodes_with_any_guide = Matrix::colSums(guide_umi_mat2) > 0
+
+# barcodes in guide matrix
+b <- colnames(guide_umi_mat2)[mask_barcodes_with_any_guide]
+
+stopifnot(identical(colnames(guide_umi_mat2)[mask_barcodes_with_any_guide],
+                    colnames(counts_umi_mat)[mask_barcodes_with_any_guide]))
+
+stopifnot(identical(rownames(extra_covariates)[mask_barcodes_with_any_guide],
+                    colnames(guide_umi_mat2)[mask_barcodes_with_any_guide]))
+
 sceptre_object = sceptre::import_data(
-  response_matrix = counts_umi_mat[unique(metadata_genes_df$intended_target_gene_symbol), mask_grnas_with_guide_umis,drop=FALSE],
-  grna_matrix = guide_umi_mat[, mask_grnas_with_guide_umis],
-  grna_target_data_frame = guide_element_map_sceptre[,c(1,2)],
+  response_matrix = counts_umi_mat[unique(metadata_genes_df$intended_target_gene_symbol), mask_barcodes_with_any_guide,drop=FALSE],
+  grna_matrix = guide_umi_mat2[, mask_barcodes_with_any_guide, drop=FALSE],
+  grna_target_data_frame = df2[,c("grna_id", "grna_target")],
   moi = "high",
-  extra_covariates = extra_covariates[mask_grnas_with_guide_umis, ]
+  extra_covariates = extra_covariates[mask_barcodes_with_any_guide, ]
 )
 print(sceptre_object)
 
 # Make sure the genes are present in the pairs
-all(unique(c(discovery_pairs$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
-all(unique(c(positive_pairs_sceptre$response_id)) %in% rownames(sceptre_object@response_matrix[[1]]))
+all(rownames(sceptre_object@response_matrix[[1]]) %in% unique(c(discovery_pairs$response_id)))
+all(rownames(sceptre_object@response_matrix[[1]]) %in% unique(c(positive_pairs_sceptre$response_id)))
 
 formula_object <- formula(~ log(response_n_nonzero) + 
                             log(response_n_umis) +
@@ -531,11 +596,17 @@ plot(sceptre_object)
 ## Quality control
 
 ```{r}
+m = sceptre_object@grna_target_data_frame$grna_target == "chr4:54913795-54914136"
+sceptre_object@grna_target_data_frame[m,]
+```
+
+
+```{r}
 sceptre_object <- run_qc(
   sceptre_object,
   n_nonzero_trt_thresh = 15L,
   n_nonzero_cntrl_thresh = 15L,
-  response_n_umis_range = c(0.05, 0.95)
+  #response_n_umis_range = c(0.05, 0.95)
   )
 plot(sceptre_object)
 
