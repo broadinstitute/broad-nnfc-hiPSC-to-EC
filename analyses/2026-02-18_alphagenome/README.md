@@ -9,7 +9,7 @@ pip install -U alphagenome
 conda install bioconda::alphagenome
 ```
 
-
+```bash
 If for some reason you need to install alphagenome from source on Sherlock, you can follow the instructions below.
 
 $ pip install -U alphagenome
@@ -37,7 +37,26 @@ hash -r
 which g++
 g++ --version
 
+# Install other dependencies from binaries
+conda install pandas numpy cython meson-python ninja
 
 # At this point, you should be able to install alphagenome from source without
-pip install -e ./alphagenome_research
-``````
+pip install --no-build-isolation -e ./alphagenome_research
+```
+
+
+
+
+## Extra notes
+
+Depending on your setup, you may need to set additional environment variables to ensure that the correct compiler and libraries are used when installing alphagenome from source. For example, you may need to set the following variables:
+
+```bash
+export CC="$CONDA_PREFIX/bin/gcc"
+export CXX="$CONDA_PREFIX/bin/g++"
+export CFLAGS="-O2"
+export CXXFLAGS="-O2 -std=c++17"
+export LDFLAGS="-L$CONDA_PREFIX/lib"
+export CPPFLAGS="-I$CONDA_PREFIX/include"
+hash -r
+```
