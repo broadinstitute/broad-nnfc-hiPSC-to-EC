@@ -1,4 +1,19 @@
-## Install alphagnenome on Sherlock from source
+## Install alphagnenome from source on Sherlock
+
+The easiest way to install alphagenome is via pip or conda.
+
+```bash
+# Install via pip
+pip install -U alphagenome
+# Or install via conda
+conda install bioconda::alphagenome
+```
+
+
+If for some reason you need to install alphagenome from source on Sherlock, you can follow the instructions below.
+
+$ pip install -U alphagenome
+
 
 The major problem is that the default GCC version on Sherlock is too old to compile alphagenome. To get around this, we can install a newer version of GCC from conda-forge and make sure that it is the compiler used when installing alphagenome from source.
 
