@@ -1,12 +1,25 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "altair>=6.0.0",
+#     "marimo>=0.22.4",
+#     "numpy>=2.4.4",
+#     "pandas>=3.0.2",
+#     "pybedtools>=0.12.0",
+#     "pysam>=0.23.3",
+# ]
+# ///
+
 import marimo
 
-__generated_with = "0.18.1"
+__generated_with = "0.22.5"
 app = marimo.App()
 
 
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
@@ -18,25 +31,26 @@ def _():
     import csv
     import pybedtools
     import pysam
+
     return csv, pd, pybedtools
 
 
 @app.cell
 def _():
     promoter_distance = 500 # Define the promoter as +/- 500bp from TSS
-    regulatory_region_distance = 1_000_000 # Extend +/- 1Mb around the TSS
+    regulatory_region_distance = 999_750 # Extend +/- 1Mb around the TSS
     return promoter_distance, regulatory_region_distance
 
 
 @app.cell
 def _():
     # Loading the element coordinates I want to annotate
-    elements_fnp = "../../results/03-2025-10-24_create_sceptre_input/all_element_annotations_final.bed"
+    elements_fnp = "../../results/03-2025-10-24_create_sceptre_input/elements.annotated.provenance.tsv"
 
     # Chromosome size file
-    genome_file = "../../../../Annotations/HG38/GRCh38_EBV.chrom.sizes.no.alt.tsv"
+    genome_file = "../../annotations/GRCh38_EBV.chrom.sizes.no.alt.tsv"
     # TSS annotation file from GENCODE v44
-    tss_file = "../../annotations/gencode_tss.bed"
+    tss_file = "../../annotations/genes/gencode.v43.protein_coding.TSS500bp.bed"
     # Guide metadata file
     cellranger_feature_reference_file = "../../metadata/hiPSC-EC_feature-reference.csv"
     # Genes metadata file
@@ -64,6 +78,8 @@ def _(elements_fnp, pd, pybedtools):
             "start",
             "end",
             "element_id",
+            "genomic_annotation",
+            "gene_id",
             "source",
         ],
     )
@@ -134,12 +150,12 @@ def _(tss_bed):
         tss_bed
             .to_dataframe(
                 header=None,
-                usecols=[6,8]
+                usecols=[6,3]
             )
             .drop_duplicates()
             .reset_index(drop=True)
             .rename(
-                columns={"thickStart": 'gene_id', "itemRgb": 'gene_symbol'},
+                columns={"thickStart": 'gene_id', "name": 'gene_symbol'},
             )
     )
     gene_id_name_map.head()
@@ -209,16 +225,17 @@ def _(elements_pybed, genome_file, regulatory_region_pybed):
         "regulatory_region_chrom",
         "regulatory_region_start",
         "regulatory_region_end",
-        "transcript_id",
+        "gene_symbol",
         "score",
         "strand",
         "gene_id",
         "gene_type",
-        "gene_symbol",
         "element_chrom",
         "element_start",
         "element_end",
         "element_id",
+        "element_annotation",
+        "gene_id_symbol",
         "element_source",
     ])
     discovery_pairs_all_df.to_csv(
@@ -227,6 +244,7 @@ def _(elements_pybed, genome_file, regulatory_region_pybed):
         header=True,
         index=False,
     )
+    discovery_pairs_all_df.head()
     return (discovery_pairs_all_df,)
 
 
@@ -268,7 +286,6 @@ def _(discovery_pairs_readout_genes, pd, readout_genes):
     )
 
     missing_pairs_for_readout_genes
-
     return
 
 
@@ -308,19 +325,20 @@ def _(elements_pybed, genome_file, promoter_region_pybed):
             )
     )
     promoter_pairs_readout_genes = promoter_pairs_readout_genes_bed.to_dataframe(names=[
-        "promoter_region_chrom",
-        "promoter_region_start",
-        "promoter_region_end",
-        "transcript_id",
+        "regulatory_region_chrom",
+        "regulatory_region_start",
+        "regulatory_region_end",
+        "gene_symbol",
         "score",
         "strand",
         "gene_id",
         "gene_type",
-        "gene_symbol",
         "element_chrom",
         "element_start",
         "element_end",
         "element_id",
+        "element_annotation",
+        "gene_id_symbol",
         "element_source",
     ])
     # Save promoter-element pairs to file
@@ -356,7 +374,6 @@ def _(pd, promoter_pairs_readout_genes, readout_genes):
     )
 
     missing_tss_pairs_for_readout_genes
-
 
     return
 
@@ -442,6 +459,10 @@ def _(mo):
     `all_guides_annotations_final.tsv`: File containing the mapping of all guides to elements.
     `discovery_pairs_no_positive_controls_final.tsv`: File containing all discovery pairs (element, readout gene) excluding positive controls.
     `positive_control_pairs_dedup_final.tsv`: File containing all positive control pairs (element, readout gene).
+
+    ```bash
+    bedtools intersect -a ../02-2025-10-21_align_guides/uniquely_mapped_guides_final.bed -b elements.annotated.provenance.tsv -wa -wb | awk -v OFS="\t" '{print $9,$13,$4, $14,$15}' > guides_dataframe_sceptre_final.tsv
+    ```
     """)
     return
 
