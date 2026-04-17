@@ -3,25 +3,12 @@
 import sys
 from collections import defaultdict
 
-DEFAULT_MAX_GUIDE_DIFF = 5
-
-if len(sys.argv) not in (3, 4):
-    sys.stderr.write(
-        "Usage: python merge_by_guides.py peaks_x_guides.tsv out.bed [max_guide_diff]\n"
-    )
+if len(sys.argv) != 3:
+    sys.stderr.write("Usage: python merge_by_guides_overlap_only.py peaks_x_guides.tsv out.bed\n")
     sys.exit(1)
 
 infile = sys.argv[1]
 outfile = sys.argv[2]
-
-if len(sys.argv) == 4:
-    try:
-        max_guide_diff = int(sys.argv[3])
-    except ValueError:
-        sys.stderr.write("max_guide_diff must be an integer\n")
-        sys.exit(1)
-else:
-    max_guide_diff = DEFAULT_MAX_GUIDE_DIFF
 
 peak_info = {}
 peak_to_guides = defaultdict(set)
@@ -36,7 +23,6 @@ with open(infile) as f:
         peak_chr = fields[0]
         peak_start = int(fields[1])
         peak_end = int(fields[2])
-
         guide_id = fields[6]
 
         peak_id = peak_chr + ":" + str(peak_start) + "-" + str(peak_end)
@@ -79,8 +65,10 @@ for chrom, peaks in peaks_by_chr.items():
             start_j, end_j, peak_b = peaks[j]
             guides_b = peak_to_guides[peak_b]
 
-            # Symmetric guide-set difference: guides present in either peak but not both.
-            if len(guides_a ^ guides_b) < max_guide_diff:
+            unique_a = len(guides_a - guides_b)
+            unique_b = len(guides_b - guides_a)
+
+            if unique_a < 5 and unique_b < 5:
                 uf.union(peak_a, peak_b)
 
             j += 1
