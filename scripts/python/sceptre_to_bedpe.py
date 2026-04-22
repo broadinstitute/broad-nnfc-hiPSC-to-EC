@@ -133,10 +133,10 @@ def _(mo, parse_args):
 
 @app.cell
 def _():
+    import numpy as np
     import pandas as pd
-    import pybedtools as pbt
 
-    return pbt, pd
+    return np, pd
 
 
 @app.cell
@@ -172,32 +172,42 @@ def _(pd):
         interval.end = mid + 1  # BED is half-open
         return interval
 
-    return genomic_distance, to_midpoint
+    return
 
 
 @app.cell
-def _(args, pbt, to_midpoint):
-    # Load gene tss annotations
-    tss_pybed = pbt.BedTool(args.tss_file)
+def _(args, pd):
+    # Load gene TSS annotations
+    tss_df = pd.read_csv(
+        args.tss_file,
+        sep="\t",
+        header=0,
+        names=[
+            "chrom",
+            "start",
+            "end",
+            "gene_symbol",
+            "score",
+            "strand",
+            "gene_id",
+            "gene_type",
+        ],
+        dtype={
+            "start": "Int64",
+            "end": "Int64",
+        },
+    )
+
 
     # If tss_midpoint is True, use the midpoint of the TSS annotation as the TSS coordinate
     if args.tss_midpoint:
-        tss_pybed = tss_pybed.each(to_midpoint).saveas()
+        mid = tss_df["start"] + (tss_df["end"] - tss_df["start"]) // 2
+        tss_df["start"] = mid
+        tss_df["end"] = mid + 1
 
+    # Select the first TSS for each gene (in case there are multiple TSS annotations per gene)
+    tss_df = tss_df.groupby("gene_id", as_index=False).first()
 
-    tss_df = tss_pybed.to_dataframe(names=[
-        "chrom",
-        "start",
-        "end",  
-        "gene_symbol",
-        "score",
-        "strand",
-        "gene_id",
-        "gene_type",
-    ])
-
-    # Select the first TSS for each gene(in case there are multiple TSS annotations per gene)
-    tss_df = tss_df.groupby("gene_id").first().reset_index()
     tss_df.head()
     return (tss_df,)
 
@@ -231,7 +241,7 @@ def _(results_df):
 
 
 @app.cell
-def _(args, genomic_distance, results_df, tss_df):
+def _(args, np, results_df, tss_df):
     # BEDPE file format columns:
     # element_chrom	element_start	element_end	gene_chrom	gene_start	gene_end	pair_id	score	strand1	strand2	gene_symbol	transcript_id	gene_id	effect_size	day	    significant distance
     results_df["element_chrom"] = results_df["grna_target"].str.split(":").str[0]
@@ -259,20 +269,21 @@ def _(args, genomic_distance, results_df, tss_df):
     annotated_results["strand1"] = "."
     annotated_results["strand2"] = "."
 
-    # Distance from element to gene tss
-    annotated_results["distance"] = annotated_results.apply(
-        lambda row: genomic_distance(
-            chrom1=row["element_chrom"],
-            start1=row["element_start"],
-            end1=row["element_end"],
-            chrom2=row["chrom"],
-            start2=row["start"],
-            end2=row["end"],
-            strand1=row["strand1"],
-            strand2=row["strand2"]
-        ),
-        axis=1
-    )
+    # Distance from element to gene TSS
+    tss_pos = annotated_results["start"]
+
+    if args.element_midpoint:
+        elem_mid = (
+            annotated_results["element_start"]
+            + (annotated_results["element_end"] - annotated_results["element_start"]) // 2
+        )
+        annotated_results["distance"] = (elem_mid - tss_pos).abs()
+    else:
+        annotated_results["distance"] = np.maximum.reduce([
+            annotated_results["element_start"] - tss_pos,
+            tss_pos - annotated_results["element_end"],
+            0
+        ])
 
     # Column order for BEDPE file
     cols = [
