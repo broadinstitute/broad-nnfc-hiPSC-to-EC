@@ -53,10 +53,6 @@ def _():
             alias="--tss-file",
             metadata={"help": "Path to TSS annotation file"}
         )
-        genome_file: Path = field(
-            alias="--genome-file",
-            metadata={"help": "Path to genome file with chromosome sizes"}
-        )
         output_file: Path = field(
             default=Path("output.bedpe"),
             alias="--output-file",
@@ -80,13 +76,11 @@ def _():
       sceptre_results_to_bedpe \\
         --input-file discovery.tsv \\
         --tss-file tss_annotations.tsv \\
-        --genome-file genome_file.tsv
 
       # Use both TSS and element midpoints
       sceptre_results_to_bedpe \\
         --input-file discovery.tsv \\
         --tss-file tss_annotations.tsv \\
-        --genome-file genome_file.tsv \\
         --tss-midpoint \\
         --element-midpoint
 
@@ -108,7 +102,6 @@ def _(Args, Path, epilog, mo):
                 # Input files for the notebook
                 input_file=Path("../../results/2026-04-22_sceptre_results/day4_grna20/sceptre_discovery_results.csv"), 
                 tss_file=Path("../../annotations/genes/gencode.v43.protein_coding.TSS500bp.bed"),
-                genome_file=Path("../../annotations/GRCh38_EBV.chrom.sizes.no.alt.tsv"),
                 output_file=Path("../../results/2026-04-22_sceptre_results/day4_grna20/sceptre_discovery_results_day4_grna20.bedpe"), 
                 tss_midpoint=True,
                 element_midpoint=True,
