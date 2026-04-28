@@ -626,3 +626,269 @@ ggsave(
 p
 ```
 
+
+```{r}
+
+df %>%
+  summarise(
+    mean_pp  = mean(power_perturbplan, na.rm = TRUE),
+    mean_sim = mean(power_simulation, na.rm = TRUE),
+    frac_pp  = mean(power_perturbplan >= 0.8, na.rm = TRUE),
+    frac_sim = mean(power_simulation >= 0.8, na.rm = TRUE)
+  )
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(here)
+
+power_thresh <- 0.8
+
+df <- sceptre_results %>%
+  filter(!is.na(power_perturbplan), !is.na(power_simulation)) %>%
+  mutate(
+    pp_has_power  = power_perturbplan >= power_thresh,
+    sim_has_power = power_simulation >= power_thresh,
+    expr_decile = ntile(log10(tap_umi + 1), 10),
+    upm_decile  = ntile(log10(reference_upm + 1), 10)
+  )
+
+# -----------------------------
+# 1. Global aggregate comparison
+# -----------------------------
+
+global_summary <- df %>%
+  summarise(
+    mean_pp = mean(power_perturbplan, na.rm = TRUE),
+    mean_sim = mean(power_simulation, na.rm = TRUE),
+    frac_pp = mean(pp_has_power, na.rm = TRUE),
+    frac_sim = mean(sim_has_power, na.rm = TRUE)
+  )
+
+global_long <- global_summary %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric_type = ifelse(grepl("^mean", metric), "Mean power", "Fraction powered"),
+    method = case_when(
+      grepl("_pp$", metric) ~ "PerturbPlan",
+      grepl("_sim$", metric) ~ "Simulation"
+    )
+  )
+
+p_global <- ggplot(global_long, aes(x = method, y = value, fill = method)) +
+  geom_col(width = 0.65) +
+  geom_text(
+    aes(label = round(value, 3)),
+    vjust = -0.4,
+    size = 4,
+    fontface = "bold"
+  ) +
+  facet_wrap(~ metric_type) +
+  coord_cartesian(ylim = c(0, 1.08), clip = "off") +
+  scale_fill_manual(values = c("PerturbPlan" = "steelblue", "Simulation" = "red")) +
+  labs(
+    title = "Global Aggregate Power Comparison",
+    x = NULL,
+    y = "Value",
+    fill = "Method"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+# -----------------------------
+# 2. Aggregate fraction powered by TAP UMI decile
+# -----------------------------
+
+tap_summary <- df %>%
+  group_by(expr_decile) %>%
+  summarise(
+    PerturbPlan = mean(pp_has_power, na.rm = TRUE),
+    Simulation = mean(sim_has_power, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(PerturbPlan, Simulation),
+    names_to = "method",
+    values_to = "frac_powered"
+  )
+
+p_tap <- ggplot(tap_summary, aes(x = expr_decile, y = frac_powered, color = method)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = c("PerturbPlan" = "steelblue", "Simulation" = "red")) +
+  scale_x_continuous(breaks = 1:10) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "Aggregate Fraction Powered by TAP UMI Decile",
+    x = "TAP UMI decile, low to high",
+    y = paste0("Fraction with power >= ", power_thresh),
+    color = "Method"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+# -----------------------------
+# 3. Aggregate fraction powered by reference UPM decile
+# -----------------------------
+
+upm_summary <- df %>%
+  group_by(upm_decile) %>%
+  summarise(
+    PerturbPlan = mean(pp_has_power, na.rm = TRUE),
+    Simulation = mean(sim_has_power, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(PerturbPlan, Simulation),
+    names_to = "method",
+    values_to = "frac_powered"
+  )
+
+p_upm <- ggplot(upm_summary, aes(x = upm_decile, y = frac_powered, color = method)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = c("PerturbPlan" = "steelblue", "Simulation" = "red")) +
+  scale_x_continuous(breaks = 1:10) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "Aggregate Fraction Powered by Reference UPM Decile",
+    x = "Reference UPM decile, low to high",
+    y = paste0("Fraction with power >= ", power_thresh),
+    color = "Method"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+# -----------------------------
+# 4. Calibration-style aggregate comparison
+# -----------------------------
+
+calibration_df <- df %>%
+  mutate(pp_power_decile = ntile(power_perturbplan, 10)) %>%
+  group_by(pp_power_decile) %>%
+  summarise(
+    mean_pp = mean(power_perturbplan, na.rm = TRUE),
+    mean_sim = mean(power_simulation, na.rm = TRUE),
+    frac_pp = mean(pp_has_power, na.rm = TRUE),
+    frac_sim = mean(sim_has_power, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  )
+
+p_calibration_mean <- ggplot(calibration_df, aes(x = mean_pp, y = mean_sim)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    title = "Aggregate Calibration of Mean Power",
+    x = "Mean PerturbPlan power by PP decile",
+    y = "Mean Simulation power"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+p_calibration_frac <- ggplot(calibration_df, aes(x = frac_pp, y = frac_sim)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    title = "Aggregate Calibration of Powered Fraction",
+    x = "PerturbPlan fraction powered by PP decile",
+    y = "Simulation fraction powered"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+# -----------------------------
+# 5. Gene-level aggregate comparison
+# -----------------------------
+
+gene_summary <- df %>%
+  group_by(response_id) %>%
+  summarise(
+    mean_pp = mean(power_perturbplan, na.rm = TRUE),
+    mean_sim = mean(power_simulation, na.rm = TRUE),
+    frac_pp = mean(pp_has_power, na.rm = TRUE),
+    frac_sim = mean(sim_has_power, na.rm = TRUE),
+    n_pairs = n(),
+    .groups = "drop"
+  ) %>%
+  filter(n_pairs >= 5)
+
+p_gene_mean <- ggplot(gene_summary, aes(x = mean_pp, y = mean_sim)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    title = "Gene-Level Average Power",
+    subtitle = paste0("Genes with >=5 E-G pairs; r = ", round(cor(gene_summary$mean_pp, gene_summary$mean_sim), 2)),
+    x = "Mean PerturbPlan power per gene",
+    y = "Mean Simulation power per gene"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+p_gene_frac <- ggplot(gene_summary, aes(x = frac_pp, y = frac_sim)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(
+    title = "Gene-Level Fraction Powered",
+    subtitle = paste0("Genes with >=5 E-G pairs; r = ", round(cor(gene_summary$frac_pp, gene_summary$frac_sim), 2)),
+    x = "PerturbPlan fraction powered per gene",
+    y = "Simulation fraction powered per gene"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+# -----------------------------
+# Combined figure
+# -----------------------------
+
+combined_plot <- (
+  p_global |
+    p_tap |
+    p_upm
+) / (
+  p_calibration_mean |
+    p_gene_mean |
+    p_gene_frac
+)
+
+ggsave(
+  filename = here(output_dir, "aggregate_power_validation.png"),
+  plot = combined_plot,
+  width = 18,
+  height = 10,
+  units = "in",
+  dpi = 300
+)
+
+combined_plot
+
+# -----------------------------
+# Save individual plots too
+# -----------------------------
+
+ggsave(here(output_dir, "aggregate_global_power.png"), p_global, width = 10, height = 6, units = "in", dpi = 300)
+ggsave(here(output_dir, "aggregate_tap_umi_deciles.png"), p_tap, width = 10, height = 6, units = "in", dpi = 300)
+ggsave(here(output_dir, "aggregate_reference_upm_deciles.png"), p_upm, width = 10, height = 6, units = "in", dpi = 300)
+ggsave(here(output_dir, "aggregate_power_calibration_mean.png"), p_calibration_mean, width = 7, height = 6, units = "in", dpi = 300)
+ggsave(here(output_dir, "aggregate_gene_mean_power.png"), p_gene_mean, width = 7, height = 6, units = "in", dpi = 300)
+ggsave(here(output_dir, "aggregate_gene_fraction_powered.png"), p_gene_frac, width = 7, height = 6, units = "in", dpi = 300)
+```
+
