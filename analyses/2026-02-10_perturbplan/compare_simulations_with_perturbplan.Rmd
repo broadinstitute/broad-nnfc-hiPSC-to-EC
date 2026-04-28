@@ -1,0 +1,628 @@
+---
+title: "DC-TAP Endothelial differentiation analysis - power analysis comparison"
+author: "Eugenio Mattei"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    theme: flatly
+    highlight: tango
+params:
+  selected_day: 0
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+library(here)
+library(ggplot2)
+library(ggExtra)
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+output_dir <- here("results", "2026-04-27_power_comparison", paste0("day", params$selected_day))
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+# Load Perturbplan results
+
+```{r}
+# perturbplan results
+perturbplan_results_path <- here(
+  "results",
+  "perturbplan",
+  paste0("day", params$selected_day),
+  "individual_power_from_sceptre_fitted_only.tsv"
+)
+# read perturbplan results
+perturbplan_results <- read.delim(perturbplan_results_path)
+perturbplan_results$pair_id <- paste(perturbplan_results$grna_target, perturbplan_results$response_id, sep = "||")
+head(perturbplan_results)
+```
+
+# Load simulation results
+
+```{r}
+#simulation results
+simulation_results_path <- here(
+  "results",
+  "power_analysis",
+  paste0("power_analysis_results_es_0.15_day", params$selected_day,".tsv")
+)
+simulation_results <- read.delim(simulation_results_path)
+simulation_results$pair_id <- paste(simulation_results$grna_target, simulation_results$response_id, sep = "||")
+head(simulation_results)
+```
+
+# Scatter plot comparing power estimates
+
+```{r}
+# Merge the two results based on pair_id
+merged_results <- merge(
+  perturbplan_results[, c("pair_id", "power", "response_id", "num_cells")],
+  simulation_results[, c("pair_id", "power", "response_id", "mean_pert_cells")],
+  by = "pair_id",
+  suffixes = c("_perturbplan", "_simulation")
+)
+# Calculate correlation
+correlation <- cor(merged_results$power_perturbplan, merged_results$power_simulation)
+print(paste("Correlation between perturbplan and simulation results:", correlation))
+```
+
+
+
+```{r}
+# Thresholds
+x_thresh <- 0.8
+y_thresh <- 0.8
+
+# Compute quadrants and counts
+quad_counts_df <- merged_results %>%
+  mutate(
+    quadrant = case_when(
+      power_perturbplan >= x_thresh & power_simulation >= y_thresh ~ "Q1",
+      power_perturbplan <  x_thresh & power_simulation >= y_thresh ~ "Q2",
+      power_perturbplan <  x_thresh & power_simulation <  y_thresh ~ "Q3",
+      power_perturbplan >= x_thresh & power_simulation <  y_thresh ~ "Q4"
+    )
+  ) 
+quad_counts <- quad_counts_df %>%
+  dplyr::count(quadrant)
+quad_counts
+# Compute dynamic label positions
+x_min <- min(merged_results$power_simulation, na.rm = TRUE)
+x_max <- max(merged_results$power_simulation, na.rm = TRUE)
+y_min <- min(merged_results$power_perturbplan, na.rm = TRUE)
+y_max <- max(merged_results$power_perturbplan, na.rm = TRUE)
+
+label_df <- tibble(
+  quadrant = c("Q1", "Q2", "Q3", "Q4"),
+  x = c(
+    x_thresh + (1 - x_thresh) * 0.15,  # Q1: right of threshold
+    x_thresh * 0.15,                   # Q2: left of threshold
+    x_thresh * 0.15,                   # Q3: left of threshold
+    x_thresh + (1 - x_thresh) * 0.15   # Q4: right of threshold
+  ),
+  y = c(
+    y_thresh + (1 - y_thresh) * 0.85,  # Q1: above threshold
+    y_thresh + (1 - y_thresh) * 0.85,  # Q2: above threshold
+    y_thresh * 0.85,                   # Q3: below threshold
+    y_thresh * 0.85                    # Q4: below threshold
+  )
+) %>%
+  left_join(quad_counts, by = "quadrant") %>%
+  mutate(
+    n = tidyr::replace_na(n, 0),
+    label = paste0(quadrant, ": ", n)
+  )
+
+breaks <- sort(unique(c(seq(0, 1, 0.25), 0.8)))
+
+# Plot
+p <- ggplot(merged_results, aes(x = power_perturbplan, y = power_simulation)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = y_thresh, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = x_thresh, linetype = "dashed", color = "blue") +
+  geom_label(
+  data = label_df,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    hjust = 0, vjust = 0,
+    size = 4, fontface = "bold",
+    fill = "white",
+    alpha = 0.8,
+    linewidth = 0
+  )+
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", color = "darkgreen", alpha = 1) +
+  scale_x_continuous(limits = c(0, 1), breaks = breaks) +
+  scale_y_continuous(limits = c(0, 1), breaks = breaks) +
+  labs(
+    title = "Power Estimates: Perturbplan vs Simulation",
+    subtitle = paste("Day 0 - Power Comparison (Correlation:", round(correlation, 2), ")"),
+    x = "Perturbplan",
+    y = "Simulations"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+p <- ggMarginal(
+  p,
+  type = "histogram",   # or "density"
+  margins = "both",
+  bins = 30,
+  fill = "grey80",
+  color = "grey40",
+  size = 3
+)
+
+print(p)
+ggsave(
+  filename = here(output_dir, "power_comparison.png"),
+  plot = p,
+  width = 13.33,
+  height = 7.5,
+  units = "in",
+  dpi = 300
+)
+
+```
+
+# Number of treated cells explains the 209 in Q2
+
+
+```{r}
+mask <- merged_results$num_cells/merged_results$mean_pert_cells < 1
+
+p <- ggplot(merged_results, aes(x = num_cells, y = mean_pert_cells, color = mask)) +
+  geom_point(alpha = 0.5) +
+  scale_color_manual(
+    values = c("TRUE" = "red", "FALSE" = "grey90"),
+    labels = c("FALSE" = "No", "TRUE" = "Yes")
+  ) +
+  labs(
+    title = "Number of Cells: Perturbplan vs Simulation",
+    x = "Perturbplan (num_cells)",
+    y = "Simulations (mean_pert_cells)",
+    color = "Perturbplan < Simulation"
+  ) +
+  theme_minimal()
+
+ggsave(
+  filename = here(output_dir, "scatter_num_trt_cells.png"),
+  plot = p,
+  width = 13.33,
+  height = 7.5,
+  units = "in",
+  dpi = 300
+)
+p
+```
+```{r}
+quad_counts_df[mask,] %>%
+  dplyr::count(quadrant)
+
+```
+
+
+
+```{r}
+mask_q2_pairs <- quad_counts_df %>%
+  filter(quadrant == "Q2") %>%
+  pull(pair_id)
+
+plot_df <- merged_results %>%
+  mutate(mask = pair_id %in% mask_q2_pairs) %>%
+  arrange(mask)
+
+p <- ggplot(plot_df, aes(x = num_cells, y = mean_pert_cells, color = mask)) +
+  geom_point(alpha = 0.5) +
+  scale_color_manual(
+    values = c("TRUE" = "red", "FALSE" = "grey90"),
+    labels = c("TRUE" = "Yes", "FALSE" = "No")
+  ) +
+  labs(
+    title = "Number of Cells: Perturbplan vs Simulation",
+    x = "Perturbplan (num_cells)",
+    y = "Simulations (mean_pert_cells)",
+    color = "Q2 pairs (209 pairs)  "
+  ) +
+  theme_minimal()
+
+ggsave(
+  filename = here(output_dir, "scatter_num_trt_cells_q2_only.png"),
+  plot = p,
+  width = 13.33,
+  height = 7.5,
+  units = "in",
+  dpi = 300
+)
+p
+```
+
+# Load SCEPTRE results
+
+```{r}
+sceptre_results_path <- here(
+  "results",
+  "sceptre",
+  "annotated_results",
+  paste0("sceptre_discovery_results_day", params$selected_da, "_grna20_annotated.tsv")
+)
+sceptre_results <- read.delim(sceptre_results_path)
+# Add columns for perturbplan and simulation results
+sceptre_results <- sceptre_results %>%
+  left_join(
+    merged_results[, c("pair_id", "power_perturbplan", "power_simulation")],
+    by = "pair_id"
+  ) %>%
+  rename(
+    power_perturbplan = power_perturbplan,
+    power_simulation = power_simulation
+  )
+head(sceptre_results)
+```
+```{r}
+df <- sceptre_results %>%
+  filter(!is.na(power_perturbplan) & !is.na(power_simulation)) %>%
+  mutate(
+    pp_has_power  = power_perturbplan >= 0.8,
+    sim_has_power = power_simulation >= 0.8,
+    agreement = pp_has_power == sim_has_power,
+    disagree = pp_has_power != sim_has_power,
+    expr_decile = ntile(log10(tap_umi + 1), 10)
+  )
+
+df_long <- df %>%
+  select(expr_decile, power_perturbplan, power_simulation) %>%
+  pivot_longer(
+    cols = c(power_perturbplan, power_simulation),
+    names_to = "method",
+    values_to = "power"
+  )
+
+power_frac <- df %>%
+  group_by(expr_decile) %>%
+  summarise(
+    frac_pp  = mean(pp_has_power, na.rm = TRUE),
+    frac_sim = mean(sim_has_power, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(frac_pp, frac_sim),
+    names_to = "method",
+    values_to = "frac"
+  ) %>%
+  mutate(
+    method = recode(method,
+      frac_pp = "power_perturbplan",
+      frac_sim = "power_simulation"
+    ),
+    y = 1.03,
+    label = paste0(round(frac * 100), "%")
+  )
+
+p <- ggplot(df_long, aes(x = factor(expr_decile), y = power, fill = method)) +
+  geom_boxplot(outlier.alpha = 0.1, position = position_dodge(width = 0.8)) +
+  geom_text(
+    data = power_frac,
+    aes(x = factor(expr_decile), y = y, label = label, group = method),
+    position = position_dodge(width = 0.8),
+    inherit.aes = FALSE,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  coord_cartesian(ylim = c(0, 1.1), clip = "off") +
+  scale_fill_manual(
+    values = c(
+      "power_perturbplan" = "steelblue",
+      "power_simulation" = "red"
+    ),
+    labels = c(
+      "power_perturbplan" = "PerturbPlan",
+      "power_simulation" = "Simulation"
+    )
+  ) +
+  labs(
+    title = "Power vs Gene Expression (Deciles)",
+    subtitle = "Fraction of pairs with power ≥ 0.8 shown above each boxplot",
+    x = "Expression Decile (low → high)",
+    y = "Power",
+    fill = "Method"
+  ) +
+  theme_minimal()
+
+ggsave(
+  filename = here(output_dir, "power_vs_expression_deciles.png"),
+  plot = p,
+  width = 13.33,
+  height = 7.5,
+  units = "in",
+  dpi = 300
+)
+
+p
+```
+```{r}
+df_long <- df %>%
+  select(significant, power_perturbplan, power_simulation) %>%
+  pivot_longer(
+    cols = c(power_perturbplan, power_simulation),
+    names_to = "method",
+    values_to = "power"
+  )
+
+label_df <- df %>%
+  dplyr::count(significant) %>%
+  mutate(
+    y = 1.08,
+    label = paste0("n=", n)
+  )
+
+power_frac <- df %>%
+  group_by(significant) %>%
+  summarise(
+    frac_pp  = mean(power_perturbplan >= 0.8, na.rm = TRUE),
+    frac_sim = mean(power_simulation >= 0.8, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(frac_pp, frac_sim),
+    names_to = "method",
+    values_to = "frac"
+  ) %>%
+  mutate(
+    method = recode(method,
+      frac_pp = "power_perturbplan",
+      frac_sim = "power_simulation"
+    ),
+    y = 1.03,
+    label = paste0(round(frac * 100), "%")
+  )
+
+p <- ggplot(df_long, aes(x = factor(significant), y = power, fill = method)) +
+  geom_boxplot(outlier.alpha = 0.1, position = position_dodge(width = 0.8)) +
+  geom_text(
+    data = power_frac,
+    aes(x = factor(significant), y = y, label = label, group = method),
+    position = position_dodge(width = 0.8),
+    inherit.aes = FALSE,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  geom_text(
+    data = label_df,
+    aes(x = factor(significant), y = y, label = label),
+    inherit.aes = FALSE,
+    size = 4,
+    fontface = "bold"
+  ) +
+  coord_cartesian(ylim = c(0, 1.12), clip = "off") +
+  scale_fill_manual(
+    values = c(
+      "power_perturbplan" = "steelblue",
+      "power_simulation" = "red"
+    ),
+    labels = c(
+      "power_perturbplan" = "PerturbPlan",
+      "power_simulation" = "Simulation"
+    )
+  ) +
+  labs(
+    title = "Power vs SCEPTRE significant",
+    subtitle = "Fraction of pairs with power ≥ 0.8 shown above each boxplot",
+    x = "Significant",
+    y = "Power",
+    fill = "Method"
+  ) +
+  theme_minimal()
+
+ggsave(
+  filename = here(output_dir, "power_vs_sceptre_significant.png"),
+  plot = p,
+  width = 13.33,
+  height = 7.5,
+  units = "in",
+  dpi = 300
+)
+
+p
+```
+
+
+```{r}
+df_long <- df %>%
+  select(is_element_proximal, power_perturbplan, power_simulation) %>%
+  pivot_longer(
+    cols = c(power_perturbplan, power_simulation),
+    names_to = "method",
+    values_to = "power"
+  )
+
+label_df <- df %>%
+  dplyr::count(is_element_proximal) %>%
+  mutate(
+    y = 1.08,
+    label = paste0("n=", n)
+  )
+
+power_frac <- df %>%
+  group_by(is_element_proximal) %>%
+  summarise(
+    frac_pp  = mean(power_perturbplan >= 0.8, na.rm = TRUE),
+    frac_sim = mean(power_simulation >= 0.8, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(frac_pp, frac_sim),
+    names_to = "method",
+    values_to = "frac"
+  ) %>%
+  mutate(
+    method = recode(method,
+      frac_pp = "power_perturbplan",
+      frac_sim = "power_simulation"
+    ),
+    y = 1.03,
+    label = paste0(round(frac * 100), "%")
+  )
+
+p <- ggplot(df_long, aes(x = factor(is_element_proximal), y = power, fill = method)) +
+  geom_boxplot(outlier.alpha = 0.1, position = position_dodge(width = 0.8)) +
+  geom_text(
+    data = power_frac,
+    aes(x = factor(is_element_proximal), y = y, label = label, group = method),
+    position = position_dodge(width = 0.8),
+    inherit.aes = FALSE,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  geom_text(
+    data = label_df,
+    aes(x = factor(is_element_proximal), y = y, label = label),
+    inherit.aes = FALSE,
+    size = 4,
+    fontface = "bold"
+  ) +
+  coord_cartesian(ylim = c(0, 1.12), clip = "off") +
+  scale_fill_manual(
+    values = c(
+      "power_perturbplan" = "steelblue",
+      "power_simulation" = "red"
+    ),
+    labels = c(
+      "power_perturbplan" = "PerturbPlan",
+      "power_simulation" = "Simulation"
+    )
+  ) +
+  labs(
+    title = "Power vs proximity to TSS",
+    subtitle = "Fraction of pairs with power ≥ 0.8 shown above each boxplot",
+    x = "Significant",
+    y = "Power",
+    fill = "Method"
+  ) +
+  theme_minimal()
+
+ggsave(
+  filename = here(output_dir, "power_vs_proximity_to_tss.png"),
+  plot = p,
+  width = 13.33,
+  height = 7.5,
+  units = "in",
+  dpi = 300
+)
+
+p
+```
+
+
+```{r}
+# Effect size comparison
+effect_df <- sceptre_results %>%
+  mutate(
+    effect_bin = cut(
+      effect_size,
+      breaks = c(-Inf, -30, -20, -10, -5, 0, Inf),
+      labels = c(
+        "< -30",
+        "-30 to -20",
+        "-20 to -10",
+        "-10 to -5",
+        "-5 to 0",
+        "> 0"
+      ),
+      right = TRUE
+    )
+  )
+
+effect_df <- effect_df %>%
+  filter(effect_size <= 0)
+
+effect_df <- effect_df %>%
+  mutate(
+    pp_has_power  = power_perturbplan >= 0.8,
+    sim_has_power = power_simulation >= 0.8
+  )
+
+power_counts <- effect_df %>%
+  group_by(effect_bin) %>%
+  summarise(
+    prop_pp  = mean(power_perturbplan >= 0.8, na.rm = TRUE),
+    prop_sim = mean(power_simulation >= 0.8, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = starts_with("prop"),
+    names_to = "method",
+    values_to = "prop"
+  ) %>%
+  mutate(
+    method = recode(method,
+      prop_pp = "power_perturbplan",
+      prop_sim = "power_simulation"
+    ),
+    y = 1.03,
+    label = paste0(round(prop * 100), "%")
+  )
+
+df_long <- effect_df %>%
+  select(effect_bin, power_perturbplan, power_simulation) %>%
+  pivot_longer(
+    cols = c(power_perturbplan, power_simulation),
+    names_to = "method",
+    values_to = "power"
+  )
+
+label_df <- effect_df %>%
+  dplyr::count(effect_bin) %>%
+  mutate(
+    y = 1.03,
+    label = paste0("n=", n)
+  )
+
+p <- ggplot(df_long, aes(x = effect_bin, y = power, fill = method)) +
+  geom_boxplot(outlier.alpha = 0.1, position = position_dodge(width = 0.8)) +
+  geom_text(
+    data = power_counts,
+    aes(x = effect_bin, y = y, label = label, group = method),
+    position = position_dodge(width = 0.8),
+    inherit.aes = FALSE,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  coord_cartesian(ylim = c(0, 1.1), clip = "off") +
+  scale_fill_manual(
+    values = c(
+      "power_perturbplan" = "steelblue",
+      "power_simulation" = "red"
+    ),
+    labels = c(
+      "power_perturbplan" = "PerturbPlan",
+      "power_simulation" = "Simulation"
+    )
+  ) +
+  labs(
+    title = "Power vs Negative Effect Size Bins",
+    subtitle = "Fraction of pairs with power ≥ 0.8 shown above each boxplot",
+    x = "Effect Size Bin",
+    y = "Power",
+    fill = "Method"
+  ) +
+  theme_minimal()
+
+ggsave(
+  filename = here(output_dir, "power_vs_effect_size_bins.png"),
+  plot = p,
+  width = 13.33,
+  height = 7.5,
+  units = "in",
+  dpi = 300
+)
+p
+```
+

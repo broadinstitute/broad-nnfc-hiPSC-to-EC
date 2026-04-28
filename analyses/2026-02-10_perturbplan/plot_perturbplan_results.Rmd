@@ -50,11 +50,34 @@ perturb_results
 ```
 
 ```{r}
-# Load perturbplan results
+# Load perturbplan power results
 perturbplan_power = perturb_results@metadata$power_results$individual_power
 names(perturbplan_power)
 ```
 
+```{r}
+# Plot the expression mean and dispersion for the genes
+plot_df = as.data.frame(perturbplan_power)
+mask_unique = !duplicated(plot_df[, c("expression_mean","expression_dispersion", "response_id")])
+plot_df = plot_df[mask_unique,]
+
+ggplot(plot_df, aes(x=expression_mean, y=expression_dispersion) ) +
+  geom_point() + 
+  scale_x_log10() +
+  scale_y_log10() + 
+  theme_classic(base_size=14)+
+  labs(title="SCEPTRE estimated mean and dispersion for readout genes")
+  
+
+ggplot(plot_df, aes(x=expression_mean, y=power) ) +
+  geom_point() + 
+  scale_x_log10() +
+  theme_classic(base_size=14)+
+  labs(title="SCEPTRE power scores for different ")
+
+
+
+```
 
 ```{r}
 # Load sceptre results
