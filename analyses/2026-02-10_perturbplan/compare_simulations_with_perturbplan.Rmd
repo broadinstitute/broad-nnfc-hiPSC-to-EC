@@ -5,7 +5,7 @@ date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
-    toc_depth: 2
+    toc_depth: 0
     number_sections: true
     theme: flatly
     highlight: tango
@@ -19,7 +19,6 @@ editor_options:
 library(here)
 library(ggplot2)
 library(ggExtra)
-library(dplyr)
 library(tidyr)
 library(pheatmap)
 
@@ -42,6 +41,12 @@ perturbplan_results_path <- here(
 # read perturbplan results
 perturbplan_results <- read.delim(perturbplan_results_path)
 perturbplan_results$pair_id <- paste(perturbplan_results$grna_target, perturbplan_results$response_id, sep = "||")
+
+mask_dup <- duplicated(perturbplan_results[,c("response_id", "expression_mean")])
+
+perturbplan_expression_mean_df <- perturbplan_results[!mask_dup, c("response_id", "expression_mean")]
+row.names(perturbplan_expression_mean_df) <- perturbplan_expression_mean_df$response_id
+
 head(perturbplan_results)
 ```
 
@@ -58,6 +63,70 @@ simulation_results <- read.delim(simulation_results_path)
 simulation_results$pair_id <- paste(simulation_results$grna_target, simulation_results$response_id, sep = "||")
 head(simulation_results)
 ```
+# Compare gene expression mean estimates
+
+```{r}
+library(DESeq2)
+
+final_sceptre_object_path <- here(
+  "results",
+  "sceptre",
+  paste0("day", params$selected_day,"_grna20"),
+  "sceptre_object.rds"
+)
+
+final_sceptre_object <- readRDS(final_sceptre_object_path)
+
+response_matrix <- final_sceptre_object@response_matrix[[1]]
+
+response_matrix <- response_matrix[, final_sceptre_object@cells_in_use, drop = FALSE]
+
+coldata <- data.frame(
+  total_umis = Matrix::colSums(response_matrix),
+  detected_genes = Matrix::colSums(response_matrix > 0)
+)
+
+dds <- DESeqDataSetFromMatrix(
+  countData = response_matrix,
+  colData = coldata,
+  design = ~ 1
+)
+
+dds <- DESeq2::estimateSizeFactors(dds, type = "poscounts")
+
+normalized_gene_mean <- rowMeans(counts(dds, normalized = TRUE))
+
+gene_mean_df <- data.frame(
+  gene_id = rownames(response_matrix),
+  simulation_gene_mean = normalized_gene_mean
+)
+
+gene_mean_df$perturbplan_gene_mean <- perturbplan_expression_mean_df[gene_mean_df$gene_id, "expression_mean"]
+rownames(gene_mean_df) <- NULL
+gene_mean_df$gene_id <- as.character(gene_mean_df$gene_id)
+#gene_mean_df[is.na(gene_mean_df)] <- 0
+# Remove NAs / infinite values
+gene_mean_df <- gene_mean_df[
+    !is.na(gene_mean_df$perturbplan_gene_mean),
+]
+head(gene_mean_df)
+```
+
+# Scatter plot comparing gene mean estimates
+
+```{r}
+ggplot(gene_mean_df, aes(x = perturbplan_gene_mean, y = simulation_gene_mean)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Gene Mean Estimates: Perturbplan vs Simulation",
+    x = "Perturbplan Gene Mean",
+    y = "Simulation Gene Mean"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
 
 # Scatter plot comparing power estimates
 
