@@ -99,7 +99,7 @@ def md_get_data(mo):
 @app.cell(hide_code=True)
 def get_data(hashlib, mo, urllib):
     DATA_URL = "https://mitra.stanford.edu/engreitz/oak/public/emattei/WTC11/day0_pass_qc.h5mu"
-    DATA_MD5 = "0916e2f6f540fa6f3a83fa240a850102"
+    DATA_MD5 = "0e60e88c8a2afe4d01c39a179dbfaac3"
     data_path = mo.notebook_dir() / "data" / "day0_pass_qc.h5mu"
 
     if not data_path.exists():
