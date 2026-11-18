@@ -1,0 +1,21 @@
+[workspace]
+name = "pysceptre-tutorial"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+[dependencies]
+python = "3.13.*"
+
+# The notebook's PEP 723 header pins the same versions: change both together.
+[pypi-dependencies]
+marimo = ">=0.25.2"
+matplotlib = "==3.11.2"
+mudata = "==0.4.1"
+numpy = "==2.5.5"
+pandas = "==3.1.1"
+pysceptre = { version = "==0.6.0", extras = ["fast", "io"] }
+scipy = "==1.18.1"
+
+[tasks]
+# --no-sandbox: use this environment, not the uv one the PEP 723 header describes
+edit = "marimo edit --no-sandbox pysceptre-tutorial-engreitzlab.py"
