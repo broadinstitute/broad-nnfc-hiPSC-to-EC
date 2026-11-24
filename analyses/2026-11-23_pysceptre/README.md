@@ -13,9 +13,10 @@ kept: `results/2026-11-23_day_objects_qc/day{N}_pass_qc.h5mu`, written by
   distance to the TSS, at 20 and 5 strata), compares the three at the trans
   level, and runs the DC-TAP paper's direct/indirect model.
 
-Six cells take long and start disabled: `calibration_nt`, `calibration_safe`,
-`power_check`, `discovery_run`, `gene_fits` and `trans_results`. Enable them in
-that order. Nothing is written to `results/` yet.
+Six cells take long: `calibration_nt`, `calibration_safe`, `power_check`,
+`discovery_run`, `gene_fits` and `trans_results`. A whole day takes about half
+an hour on a Mac (days 2 and 4: 27 and 32 minutes, 13 to 14 GB). Nothing is
+written to `results/` but the HTML of a command-line run.
 
 Days 2 and 4 are day 0's notebook with that day's file and labels. They keep
 day 0's pairwise QC cuts and IHW settings, so the days compare.
@@ -38,3 +39,10 @@ pixi run edit day0_pysceptre.py
 Or, without pixi, `uvx marimo edit --sandbox day0_pysceptre.py`, which reads the
 pins from the notebook's PEP 723 header. Change `pixi.toml` and that header
 together.
+
+To run a day from the command line and keep its outputs:
+
+```sh
+pixi run marimo export html --no-sandbox day2_pysceptre.py \
+    -o ../../results/2026-11-23_pysceptre/day2_pysceptre.html
+```

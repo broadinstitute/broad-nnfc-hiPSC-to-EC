@@ -961,7 +961,7 @@ def calibration_settings(
     )
 
 
-@app.cell(disabled=True)
+@app.cell
 def calibration_nt(
     CALIBRATION_GROUP_SIZE,
     FDR,
@@ -1005,7 +1005,7 @@ def calibration_nt(
     return (calibration_nt,)
 
 
-@app.cell(disabled=True)
+@app.cell
 def calibration_safe(
     CALIBRATION_GROUP_SIZE,
     FDR,
@@ -1132,7 +1132,7 @@ def md_power_check(mo):
     return
 
 
-@app.cell(disabled=True)
+@app.cell
 def power_check(
     N_JOBS,
     N_NONZERO_CNTRL,
@@ -1211,7 +1211,7 @@ def md_discovery_run(mo):
     return
 
 
-@app.cell(disabled=True)
+@app.cell
 def discovery_run(
     N_JOBS,
     SEED,
@@ -1829,7 +1829,7 @@ def md_power(mo):
     return
 
 
-@app.cell(disabled=True)
+@app.cell
 def gene_fits(
     N_JOBS,
     covariate_matrix,
@@ -2125,7 +2125,7 @@ def trans_pairs_qc_scatter(
     return
 
 
-@app.cell(disabled=True)
+@app.cell
 def trans_results(
     N_JOBS,
     SEED,

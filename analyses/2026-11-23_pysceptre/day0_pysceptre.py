@@ -2,6 +2,7 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "anndata==0.13.4",
+#     "ihw-py @ git+https://github.com/broadinstitute/pyIHW.git@5cff71403f1e21d602d014537b83dc32fcfa8a09",
 #     "marimo>=0.25.2",
 #     "matplotlib==3.11.2",
 #     "mudata==0.4.1",
