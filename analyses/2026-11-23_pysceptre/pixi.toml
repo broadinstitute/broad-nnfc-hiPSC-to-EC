@@ -1,0 +1,28 @@
+[workspace]
+name = "pysceptre-days"
+channels = ["conda-forge"]
+# macOS 14 makes numpy and scipy resolve to their Accelerate wheels. numpy
+# 2.5.5's macOS 11 wheel (OpenBLAS 0.3.34) gives wrong matmuls when called
+# from several threads at once, which pysceptre does with n_jobs > 1:
+# broadinstitute/pysceptre#8.
+platforms = [{ name = "osx-arm64-macos14", platform = "osx-arm64", macos = "14.0" }, "linux-64"]
+
+[dependencies]
+python = "3.13.*"
+
+# The notebooks' PEP 723 headers pin the same versions: change them together.
+[pypi-dependencies]
+anndata = "==0.13.4"
+ihw-py = { git = "https://github.com/broadinstitute/pyIHW.git", rev = "5cff71403f1e21d602d014537b83dc32fcfa8a09" }
+marimo = ">=0.25.2"
+matplotlib = "==3.11.2"
+mudata = "==0.4.1"
+numpy = "==2.5.5"
+pandas = "==3.1.1"
+pysceptre = { version = "==0.6.0", extras = ["fast", "io"] }
+scipy = "==1.18.1"
+
+[tasks]
+# --no-sandbox: use this environment, not the uv one the PEP 723 header describes.
+# Name the notebook after the task: `pixi run edit day0_pysceptre.py`.
+edit = "marimo edit --no-sandbox"
